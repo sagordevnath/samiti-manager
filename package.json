@@ -1,0 +1,44 @@
+{
+  "name": "samity-manager",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Role-based management system for Bangladeshi cooperative societies and NGO-MFIs",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "npm@10.8.2",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,green \"npm run dev -w @samity/api\" \"npm run dev -w @samity/web\"",
+    "dev:api": "npm run dev -w @samity/api",
+    "dev:web": "npm run dev -w @samity/web",
+    "build": "npm run build -w @samity/shared && npm run build -w @samity/api && npm run build -w @samity/web",
+    "build:shared": "npm run build -w @samity/shared",
+    "build:api": "npm run build -w @samity/api",
+    "build:web": "npm run build -w @samity/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "format": "prettier --write \"**/*.{ts,tsx,css,json,md,yml,yaml}\" --ignore-unknown",
+    "format:check": "prettier --check \"**/*.{ts,tsx,css,json,md,yml,yaml}\" --ignore-unknown",
+    "test": "npm run test --workspaces --if-present",
+    "db:migrate": "npm run db:migrate -w @samity/api",
+    "db:seed": "npm run db:seed -w @samity/api",
+    "db:types": "npm run db:types -w @samity/api"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^8.44.0",
+    "@typescript-eslint/parser": "^8.44.0",
+    "concurrently": "^9.2.1",
+    "eslint": "^8.57.1",
+    "eslint-config-prettier": "^9.1.2",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-react-hooks": "^4.6.2",
+    "prettier": "^3.6.2",
+    "typescript": "^5.6.3"
+  }
+}

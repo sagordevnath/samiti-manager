@@ -1,0 +1,51 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Noto Sans Bengali', 'Hind Siliguri', system-ui, sans-serif;
+  --font-bengali: 'Noto Sans Bengali', sans-serif;
+
+  --color-primary: oklch(0.51 0.09 182);
+  --color-primary-foreground: oklch(0.98 0.005 182);
+  --color-secondary: oklch(0.95 0.02 182);
+  --color-secondary-foreground: oklch(0.3 0.05 182);
+  --color-destructive: oklch(0.55 0.2 25);
+  --color-destructive-foreground: oklch(0.98 0.005 25);
+  --color-muted: oklch(0.96 0.01 182);
+  --color-muted-foreground: oklch(0.5 0.02 182);
+  --color-accent: oklch(0.93 0.03 90);
+  --color-accent-foreground: oklch(0.3 0.05 90);
+  --color-border: oklch(0.9 0.01 182);
+  --color-card: #ffffff;
+  --color-card-foreground: oklch(0.2 0.02 182);
+  --color-background: oklch(0.985 0.005 182);
+  --color-foreground: oklch(0.2 0.02 182);
+  --color-ring: oklch(0.51 0.09 182);
+}
+
+/* ── shadcn-style CSS variables consumed by the component layer ─────────── */
+:root {
+  --background: 0 0% 100%;
+  --foreground: 220 14% 12%;
+  --border: 214 15% 88%;
+  --input: 214 15% 88%;
+  --ring: 183 65% 32%;
+  --radius: 0.5rem;
+}
+
+@layer base {
+  * {
+    border-color: hsl(var(--border));
+  }
+  html {
+    font-family: var(--font-sans);
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-sans);
+  }
+}
+
+/* Bengali text needs generous line height. */
+:where([lang='bn'], .bn-text) {
+  line-height: 1.7;
+}
