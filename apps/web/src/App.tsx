@@ -11,6 +11,19 @@ import { WorkingAreasPage } from '@/pages/WorkingAreasPage';
 import { MemberAdmissionPage } from '@/pages/MemberAdmissionPage';
 import { SamityMobilePage } from '@/pages/SamityMobilePage';
 import { SavingsPage } from '@/pages/SavingsPage';
+import { SharesPage } from '@/pages/SharesPage';
+import { PassbookPage } from '@/pages/PassbookPage';
+import { LoansPage } from '@/pages/LoansPage';
+import { LoanApplyPage } from '@/pages/LoanApplyPage';
+import { LoanDetailPage } from '@/pages/LoanDetailPage';
+import { LoanProductsPage } from '@/pages/LoanProductsPage';
+import { ProposalPage } from '@/pages/ProposalPage';
+import { DisbursementPage } from '@/pages/DisbursementPage';
+import { CollectionSheetPage } from '@/pages/CollectionSheetPage';
+import { CashHandoverPage } from '@/pages/CashHandoverPage';
+import { ReceiptPage } from '@/pages/ReceiptPage';
+import { VoucherPage } from '@/pages/VoucherPage';
+import { AgreementPage } from '@/pages/AgreementPage';
 
 export default function App() {
   return (
@@ -27,7 +40,19 @@ export default function App() {
         <Route path="/members/new" element={<MemberAdmissionPage />} />
         <Route path="/samities" element={<SamityMobilePage />} />
         <Route path="/savings" element={<SavingsPage />} />
-        <Route path="/loans" element={<PlaceholderPage />} />
+        <Route path="/savings/shares" element={<SharesPage />} />
+        <Route path="/savings/passbook" element={<PassbookPage />} />
+        <Route path="/loans" element={<LoansPage />} />
+        <Route path="/loans/new" element={<LoanApplyPage />} />
+        <Route path="/loans/products" element={<LoanProductsPage />} />
+        <Route path="/loans/disbursements" element={<DisbursementPage />} />
+        <Route path="/collection" element={<CollectionSheetPage />} />
+        <Route path="/collection/cash" element={<CashHandoverPage />} />
+        <Route path="/collection/receipt/:idempotencyKey" element={<ReceiptPage />} />
+        <Route path="/loans/disbursements/:applicationId/voucher" element={<VoucherPage />} />
+        <Route path="/loans/disbursements/:applicationId/agreement" element={<AgreementPage />} />
+        <Route path="/loans/:id" element={<LoanDetailPage />} />
+        <Route path="/loans/:id/proposal" element={<ProposalPage />} />
         <Route path="/branches" element={<BranchesPage />} />
         <Route path="/branches/new" element={<BranchFormPage />} />
         <Route path="/organization" element={<OrgTreePage />} />

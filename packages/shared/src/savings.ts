@@ -78,11 +78,12 @@ export const savingsTxCreateSchema = z.object({
   accountId: uuidSchema,
   type: z.enum(SAVINGS_TX_TYPES),
   amount: moneySchema,
+  toAccountId: uuidSchema.optional(),
   reference: z.string().trim().max(120).optional(),
   note: z.string().trim().max(500).optional(),
   reversalOf: uuidSchema.optional(), // original tx id when posting a reversal
-  reversalReason: z.string().trim().max(500).optional(),
-  reversalApprovedBy: uuidSchema.optional(),
+  reversalReason: z.string().trim().min(1).max(500).optional(),
+  approvalReference: z.string().trim().max(120).optional(),
 });
 export type SavingsTxCreateInput = z.infer<typeof savingsTxCreateSchema>;
 
@@ -91,6 +92,7 @@ export const interestRunSchema = z.object({
   productIds: z.array(uuidSchema).optional(),
   asOf: z.string().datetime().optional(),
   dryRun: z.boolean().default(true),
+  frequency: z.enum(['monthly', 'yearly']).default('monthly'),
 });
 export type InterestRunInput = z.infer<typeof interestRunSchema>;
 
@@ -126,3 +128,147 @@ export const dividendDeclarationSchema = z.object({
   approvedAt: z.string().datetime(),
 });
 export type DividendDeclarationInput = z.infer<typeof dividendDeclarationSchema>;
+
+// ── Passbook statement (view + printable) ──────────────────────────────────
+export const passbookQuerySchema = z.object({
+  accountId: uuidSchema,
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD required'),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD required'),
+});
+export type PassbookQuery = z.infer<typeof passbookQuerySchema>;
+
+/** One printed/fetchable ledger line of a passbook. */
+export interface PassbookLine {
+  id: string;
+  date: string; // ISO timestamp
+  type: SavingsTxType;
+  deposit: string;
+  withdrawal: string;
+  balanceAfter: string;
+  reference: string | null;
+  note: string | null;
+}
+
+export interface PassbookStatement {
+  account: {
+    id: string;
+    accountNumber: string;
+    memberName: string;
+    memberNameBn: string | null;
+    memberCode: string | null;
+    productName: string;
+    productNameBn: string | null;
+    branchName: string | null;
+    orgName: string | null;
+    status: SavingsAccountStatus;
+  };
+  from: string;
+  to: string;
+  openingBalance: string;
+  closingBalance: string;
+  totalDeposits: string;
+  totalWithdrawals: string;
+  lines: PassbookLine[];
+}
+
+/**
+ * Pure statement builder — shared by the API (demo + Supabase paths) and the
+ * web print view, so both compute identical opening/closing figures.
+ */
+export function computeStatement(
+  account: PassbookStatement['account'],
+  from: string,
+  to: string,
+  allLines: PassbookLine[],
+  ledgerBalance: string,
+): PassbookStatement {
+  const inRange = allLines.filter((l) => l.date.slice(0, 10) >= from && l.date.slice(0, 10) <= to);
+  const totalDeposits = inRange.reduce((s, l) => s + Number(l.deposit), 0);
+  const totalWithdrawals = inRange.reduce((s, l) => s + Number(l.withdrawal), 0);
+  const closing = inRange.length > 0 ? Number(inRange[inRange.length - 1]!.balanceAfter) : Number(ledgerBalance);
+  const opening = closing - totalDeposits + totalWithdrawals;
+  return {
+    account,
+    from,
+    to,
+    openingBalance: opening.toFixed(2),
+    closingBalance: closing.toFixed(2),
+    totalDeposits: totalDeposits.toFixed(2),
+    totalWithdrawals: totalWithdrawals.toFixed(2),
+    lines: inRange,
+  };
+}
+
+// ── Balance integrity / reconciliation ──────────────────────────────────────
+export const reconciliationRunSchema = z.object({
+  accountId: uuidSchema.optional(), // omit = check all org accounts
+});
+export type ReconciliationRunInput = z.infer<typeof reconciliationRunSchema>;
+
+export interface ReconciliationResult {
+  accountId: string;
+  accountNumber: string;
+  storedBalance: string;
+  ledgerBalance: string; // recomputed from savings_transactions
+  difference: string;
+  entryCount: number;
+  lastEntryAt: string | null;
+  status: 'ok' | 'mismatch';
+}
+
+export interface ReconciliationReport {
+  runAt: string;
+  checked: number;
+  mismatches: number;
+  results: ReconciliationResult[];
+}
+
+/** DB-side counterpart: recompute_balance(account_id) + nightly report query in 0011. */
+
+// ── Dividend calculation helpers (pure) ────────────────────────────────────
+export const DIVIDEND_STATUSES = ['draft', 'approved'] as const;
+export type DividendStatus = (typeof DIVIDEND_STATUSES)[number];
+
+/**
+ * Split declared surplus into dividend pool and retained reserves.
+ * payoutRate is a percent of surplus approved by the general meeting.
+ */
+export function splitDividendSurplus(surplus: string, payoutRate: number): { dividendPool: string; retained: string } {
+  const pool = (Number(surplus) * payoutRate) / 100;
+  return { dividendPool: pool.toFixed(2), retained: (Number(surplus) - pool).toFixed(2) };
+}
+
+/** One member's dividend: pool prorated by paid-up shares of the total. */
+export function memberDividend(dividendPool: string, paidShares: number, totalPaidShares: number, faceValue: string): string {
+  if (totalPaidShares <= 0) return '0.00';
+  const paidCapital = paidShares * Number(faceValue);
+  const totalCapital = totalPaidShares * Number(faceValue);
+  return ((Number(dividendPool) * paidCapital) / totalCapital).toFixed(2);
+}
+
+/** State machine: dividends become immutable once approved by the meeting record. */
+export function nextDividendStatus(current: DividendStatus): DividendStatus | null {
+  const transitions: Record<DividendStatus, DividendStatus | null> = { draft: 'approved', approved: null };
+  return transitions[current];
+}
+
+/**
+ * Per-share dividend preview given declaration inputs — used by the API
+ * preview endpoint and the UI before a declaration is saved.
+ */
+export function previewDividend(
+  declarations: Array<{ memberId: string; paidShares: number }>,
+  input: { surplus: string; payoutRate: number; faceValue: string },
+): { dividendPool: string; retained: string; perMember: Array<{ memberId: string; paidShares: number; amount: string }> } {
+  const { dividendPool, retained } = splitDividendSurplus(input.surplus, input.payoutRate);
+  const totalPaidShares = declarations.reduce((s, d) => s + d.paidShares, 0);
+  return {
+    dividendPool,
+    retained,
+    perMember: declarations.map((d) => ({
+      memberId: d.memberId,
+      paidShares: d.paidShares,
+      amount: memberDividend(dividendPool, d.paidShares, totalPaidShares, input.faceValue),
+    })),
+  };
+}

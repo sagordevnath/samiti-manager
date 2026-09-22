@@ -20,6 +20,37 @@ export type AdmissionStage =
   | 'passbook_generated';
 export type IdType = 'nid' | 'birth_registration';
 export type TransferStage = 'proposed' | 'approved' | 'rejected' | 'completed';
+export type LoanProductType =
+  | 'general'
+  | 'seasonal_agri'
+  | 'microenterprise'
+  | 'housing'
+  | 'education'
+  | 'emergency'
+  | 'migration'
+  | 'device'
+  | 'climate';
+export type InstallmentFrequency = 'daily' | 'weekly' | 'biweekly' | 'monthly';
+export type InterestMethod = 'declining_balance' | 'flat';
+export type LoanApplicationStatus =
+  | 'draft'
+  | 'submitted'
+  | 'officer_review'
+  | 'bm_review'
+  | 'am_review'
+  | 'approved'
+  | 'rejected'
+  | 'disbursed'
+  | 'closed';
+export type LoanStage =
+  | 'member_request'
+  | 'officer_visit'
+  | 'household_check'
+  | 'guarantor'
+  | 'bm_review'
+  | 'am_review'
+  | 'decision';
+export type LoanStageAction = 'done' | 'approved' | 'rejected' | 'returned';
 
 export interface Table {
   Row: {
@@ -547,6 +578,56 @@ export interface Database {
     };
     Views: Record<string, never>;
     Functions: {
+        recompute_balance: {
+          Args: { p_account_id: string };
+          Returns: number;
+        };
+        run_reconciliation: {
+          Args: { p_org_id: string };
+          Returns: {
+            account_id: string;
+            account_number: string;
+            stored_balance: number;
+            ledger_balance: number;
+            difference: number;
+            entry_count: number;
+            last_entry_at: string | null;
+            status: string;
+          }[];
+        };
+        post_savings_transaction: {
+          Args: Record<string, never>;
+          Returns: unknown;
+        };
+        enforce_loan_rate_cap: { Args: Record<string, never>; Returns: unknown };
+        enforce_loan_amount_band: { Args: Record<string, never>; Returns: unknown };
+        enforce_loan_status_transition: { Args: Record<string, never>; Returns: unknown };
+        enforce_disbursement_completion: { Args: Record<string, never>; Returns: unknown };
+        enforce_schedule_total: { Args: Record<string, never>; Returns: unknown };
+        mark_application_disbursed: { Args: Record<string, never>; Returns: unknown };
+        shift_due_date_for_holidays: {
+          Args: { p_app_id: string; p_org_id: string };
+          Returns: unknown;
+        };
+        authorize_loan_disbursement: {
+          Args: {
+            p_application_id: string;
+            p_actor: string;
+            p_schedule: unknown;
+            p_journal: unknown;
+            p_passbook: unknown;
+            p_sms: unknown;
+          };
+          Returns: unknown;
+        };
+        cancel_loan_disbursement: {
+          Args: { p_application_id: string; p_actor: string; p_reason: string };
+          Returns: unknown;
+        };
+        officer_cash_expected: {
+          Args: { p_org_id: string; p_officer_id: string; p_handover_date: string };
+          Returns: number;
+        };
       auth_org_id: { Args: Record<string, never>; Returns: string | null };
       auth_user_role: { Args: Record<string, never>; Returns: string };
       can_read_members: { Args: Record<string, never>; Returns: boolean };
@@ -565,6 +646,322 @@ export interface Database {
       admission_stage: AdmissionStage;
       id_type: IdType;
       transfer_stage: TransferStage;
+      loan_product_type: LoanProductType;
+      installment_frequency: InstallmentFrequency;
+      interest_method: InterestMethod;
+      loan_application_status: LoanApplicationStatus;
+      loan_stage: LoanStage;
+      loan_stage_action: LoanStageAction;
+      disbursement_mode: DisbursementMode;
+      disbursement_status: DisbursementStatus;
     };
   };
+}
+
+export interface LoanPolicyRow {
+  id: string;
+  org_id: string;
+  rate_cap_percent: number;
+  bm_approval_limit_bdt: string;
+  guarantors_required: number;
+  max_active_loans_per_member: number;
+  min_days_between_loans: number;
+  updated_by: string | null;
+  updated_at: string;
+}
+
+export interface LoanProductRow {
+  id: string;
+  org_id: string;
+  code: string;
+  name: string;
+  name_bn: string | null;
+  product_type: LoanProductType;
+  min_amount: string;
+  max_amount: string;
+  term_months: number;
+  installment_frequency: InstallmentFrequency;
+  interest_method: InterestMethod;
+  interest_rate: number;
+  service_charge: number;
+  processing_fee_rate: number;
+  insurance_premium_rate: number;
+  grace_period_installments: number;
+  eligibility_note: string | null;
+  required_documents: string[];
+  guarantors_required: number;
+  guarantor_min_relationship: string | null;
+  is_active: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LoanApplicationRow {
+  id: string;
+  org_id: string;
+  branch_id: string;
+  member_id: string;
+  product_id: string;
+  application_number: string;
+  requested_amount: string;
+  purpose: string;
+  status: LoanApplicationStatus;
+  term_months: number;
+  guarantors: Array<{
+    name: string;
+    relation: 'spouse' | 'parent' | 'sibling' | 'same_group_member' | 'business_peer' | 'other';
+    mobile: string;
+    nidLast4: string;
+    isMember: boolean;
+    consentGiven: boolean;
+  }>;
+  decision_reason: string | null;
+  decided_by: string | null;
+  decided_at: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LoanApplicationStepRow {
+  id: string;
+  org_id: string;
+  application_id: string;
+  stage: LoanStage;
+  action: LoanStageAction;
+  actor_role: string;
+  actor_id: string | null;
+  note: string | null;
+  payload: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface LoanApprovalMatrixRow {
+  id: string;
+  org_id: string;
+  product_id: string | null;
+  min_amount: string | null;
+  max_amount: string | null;
+  approver_roles: string[];
+  solo_approval_limit: string | null;
+  priority: number;
+  is_active: boolean;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface LoanInstallmentRow {
+  id: string;
+  org_id: string;
+  application_id: string;
+  seq: number;
+  due_date: string;
+  principal: string;
+  interest: string;
+  paid_amount: string;
+  paid_at: string | null;
+  created_at: string;
+}
+
+export type DisbursementMode = 'cash_branch' | 'cash_center' | 'bank_transfer' | 'bkash' | 'nagad';
+export type DisbursementStatus = 'pending' | 'prepared' | 'completed' | 'cancelled';
+export type LoanDisbursementCheck =
+  | 'savings_deposit_paid'
+  | 'insurance_premium_collected'
+  | 'fees_paid'
+  | 'member_present'
+  | 'guarantor_signature'
+  | 'cash_available';
+
+export interface LoanHolidayRow {
+  id: string;
+  org_id: string;
+  date: string;
+  name: string;
+  name_bn: string | null;
+  is_recurring: boolean;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface LoanDisbursementRow {
+  id: string;
+  org_id: string;
+  branch_id: string;
+  application_id: string;
+  samity_id: string | null;
+  status: DisbursementStatus;
+  planned_date: string | null;
+  checks: LoanDisbursementCheck[];
+  mode: DisbursementMode | null;
+  disbursement_date: string | null;
+  mfs_reference: string | null;
+  bank_reference: string | null;
+  cash_received_by_name: string | null;
+  actual_user_of_funds: string | null;
+  actual_user_relation: string | null;
+  note: string | null;
+  prepared_by: string | null;
+  prepared_at: string | null;
+  loan_number: string | null;
+  voucher_number: string | null;
+  cancelled_at: string | null;
+  cancelled_by: string | null;
+  cancel_reason: string | null;
+  disbursed_by: string | null;
+  disbursed_at: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface JournalEntryRow {
+  id: string;
+  org_id: string;
+  branch_id: string | null;
+  entry_date: string;
+  source_type: 'loan_disbursement' | 'loan_disbursement_reversal' | 'savings' | 'share' | 'manual';
+  source_id: string | null;
+  memo: string;
+  voided_at: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface JournalLineRow {
+  id: string;
+  entry_id: string;
+  account_code: string;
+  account_name: string;
+  debit: string;
+  credit: string;
+}
+
+export interface LoanPassbookEntryRow {
+  id: string;
+  org_id: string;
+  application_id: string;
+  member_id: string;
+  loan_number: string;
+  entry_date: string;
+  description: string;
+  debit: string;
+  credit: string;
+  balance_after: string;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface SmsOutboxRow {
+  id: string;
+  org_id: string;
+  member_id: string | null;
+  phone: string | null;
+  template: string;
+  body: string;
+  status: 'queued' | 'sent' | 'failed';
+  created_at: string;
+  sent_at: string | null;
+}
+
+export interface UtilizationVisitRow {
+  id: string;
+  org_id: string;
+  branch_id: string | null;
+  application_id: string;
+  member_id: string;
+  scheduled_date: string;
+  status: 'scheduled' | 'completed' | 'missed';
+  visited_at: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface LoanRepaymentScheduleRow {
+  id: string;
+  org_id: string;
+  application_id: string;
+  seq: number;
+  original_due_date: string;
+  due_date: string;
+  shifted: boolean;
+  shift_reason: string | null;
+  principal: string;
+  interest: string;
+  total: string;
+  balance_after: string;
+  paid_amount: string;
+  paid_at: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+export type UtilizationStatus = 'planned' | 'verified';
+
+export type CollectionAllocationDb = {
+  overdueApplied: Array<{ installmentId: string; seq: number; amount: string }>;
+  currentApplied: { installmentId: string; seq: number; amount: string } | null;
+  savingsApplied: string;
+  advanceApplied: string;
+  unapplied: string;
+};
+
+export interface CollectionEntryRow {
+  id: string;
+  org_id: string;
+  branch_id: string;
+  idempotency_key: string;
+  member_id: string;
+  application_id: string | null;
+  meeting_date: string;
+  loan_paid: string;
+  savings_paid: string;
+  extra_paid: string;
+  allocation: CollectionAllocationDb;
+  receipt_no: string;
+  collected_by: string | null;
+  captured_at: string | null;
+  note: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+export type HandoverStatus = 'draft' | 'submitted' | 'confirmed' | 'rejected';
+
+export interface CashHandoverRow {
+  id: string;
+  org_id: string;
+  branch_id: string;
+  officer_id: string;
+  handover_date: string;
+  expected_amount: string;
+  counted_amount: string | null;
+  received_amount: string | null;
+  difference: string;
+  difference_kind: 'none' | 'shortage' | 'excess';
+  status: HandoverStatus;
+  officer_note: string | null;
+  accountant_note: string | null;
+  confirmed_by: string | null;
+  confirmed_at: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LoanUtilizationPlanRow {
+  id: string;
+  org_id: string;
+  application_id: string;
+  items: Array<{ category: string; description: string; amount: string }>;
+  status: UtilizationStatus;
+  verification: {
+    items: Array<{ category: string; verifiedAmount: string; note?: string }>;
+    verifierNote: string | null;
+  } | null;
+  verified_by: string | null;
+  verified_at: string | null;
+  created_by: string | null;
+  created_at: string;
 }

@@ -6,3 +6,8 @@ export * from './org.js';
 export * from './member.js';
 export * from './samity.js';
 export * from './savings.js';
+export * from './loan.js';
+export * from './loan-governance.js';
+export * from './loan-disbursement.js';
+export * from './collection.js';
+export * from './collection-engine.js';

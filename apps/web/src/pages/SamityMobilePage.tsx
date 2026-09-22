@@ -35,7 +35,7 @@ export function SamityMobilePage() {
     localStorage.setItem('samity-mobile-draft', draftNote);
   }, [draftNote]);
 
-  const nextMeeting = useMemo(() => meetings[0], [meetings]);
+  const nextMeeting = useMemo(() => meetings[0] ?? null, [meetings]);
 
   return (
     <div className="mx-auto max-w-md space-y-4 pb-8">
@@ -54,11 +54,11 @@ export function SamityMobilePage() {
 
       <div className="rounded-2xl border bg-gradient-to-br from-teal-50 to-white p-4 shadow-sm">
         <p className="text-xs uppercase tracking-wide text-muted-foreground">Next meeting</p>
-        <h2 className="mt-2 text-lg font-semibold">{nextMeeting.name}</h2>
+        <h2 className="mt-2 text-lg font-semibold">{nextMeeting?.name}</h2>
         <div className="mt-3 space-y-2 text-sm text-muted-foreground">
-          <div className="flex items-center gap-2"><CalendarClock className="h-4 w-4" /> {nextMeeting.date} · {nextMeeting.time}</div>
-          <div className="flex items-center gap-2"><MapPin className="h-4 w-4" /> {nextMeeting.place}</div>
-          <div className="flex items-center gap-2"><Users className="h-4 w-4" /> {nextMeeting.present}/{nextMeeting.total} present</div>
+          <div className="flex items-center gap-2"><CalendarClock className="h-4 w-4" /> {nextMeeting?.date} · {nextMeeting?.time}</div>
+          <div className="flex items-center gap-2"><MapPin className="h-4 w-4" /> {nextMeeting?.place}</div>
+          <div className="flex items-center gap-2"><Users className="h-4 w-4" /> {nextMeeting?.present}/{nextMeeting?.total} present</div>
         </div>
       </div>
 

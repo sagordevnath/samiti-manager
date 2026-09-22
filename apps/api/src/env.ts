@@ -19,6 +19,7 @@ const envSchema = z.object({
 
   /** Master key for member-identity field encryption (base64/passphrase). */
   MEMBER_ENC_KEY: z.string().min(8).default('dev-only-member-encryption-master-key'),
+  SAVINGS_INTEREST_FREQUENCY: z.enum(['monthly', 'yearly']).default('monthly'),
 });
 
 export type Env = z.infer<typeof envSchema>;

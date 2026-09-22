@@ -42,7 +42,13 @@ export const NAV: readonly NavGroup[] = [
       { key: 'memberAdmission', to: '/members/new', icon: 'UserPlus', permission: 'member:write' },
       { key: 'samities', to: '/samities', icon: 'Users', permission: 'member:read' },
       { key: 'savings', to: '/savings', icon: 'PiggyBank', permission: 'savings:read' },
+      { key: 'shares', to: '/savings/shares', icon: 'Coins', permission: 'savings:read' },
+      { key: 'passbook', to: '/savings/passbook', icon: 'BookOpen', permission: 'savings:read' },
       { key: 'loans', to: '/loans', icon: 'HandCoins', permission: 'loan:read' },
+      { key: 'loanProducts', to: '/loans/products', icon: 'ClipboardList', permission: 'loan:read' },
+      { key: 'loanDisbursements', to: '/loans/disbursements', icon: 'Banknote', permission: 'loan:write' },
+      { key: 'collection', to: '/collection', icon: 'HandCoins', permission: 'loan:write' },
+      { key: 'cashHandover', to: '/collection/cash', icon: 'Wallet', permission: 'loan:write' },
     ],
   },
   {

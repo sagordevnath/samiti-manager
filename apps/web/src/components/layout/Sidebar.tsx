@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import {
   BarChart3,
   Building2,
+  ClipboardList,
   HandCoins,
   Landmark,
   LayoutDashboard,
@@ -11,6 +12,7 @@ import {
   PiggyBank,
   UserCog,
   Users,
+  Wallet,
 } from 'lucide-react';
 import { NAV, type NavItem } from '@samity/shared';
 import { usePermissions } from '@/lib/permissions';
@@ -22,13 +24,15 @@ const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   Users,
   PiggyBank,
   HandCoins,
+  ClipboardList,
   Building2,
   UserCog,
   Landmark,
   BarChart3,
   Map,
   MapPinned,
-};
+  Wallet,
+}
 
 /** Sidebar rendered from the shared NAV tree, filtered by user permissions. */
 export function Sidebar() {

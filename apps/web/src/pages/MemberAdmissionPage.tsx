@@ -69,7 +69,7 @@ export function MemberAdmissionPage() {
     setForm((prev) => ({ ...prev, [field]: value }));
   };
 
-  const currentStage = STAGES[currentStep];
+  const currentStage = STAGES[currentStep]!;
   const canContinue = stepIsComplete(currentStep, form);
 
   const handleNext = () => {

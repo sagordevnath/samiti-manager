@@ -14,6 +14,11 @@ import { orgRouter } from './routes/org.routes.js';
 import { samityRouter } from './routes/samity.routes.js';
 import { treeRouter } from './routes/tree.routes.js';
 import { savingsRouter } from './routes/savings.routes.js';
+import { savingsDemoRouter } from './routes/savings.demo.routes.js';
+import { loansRouter } from './routes/loans.routes.js';
+import { loansDemoRouter } from './routes/loans.demo.routes.js';
+import { collectionDemoRouter } from './routes/collection.demo.routes.js';
+import { isDemoMode } from './lib/demo.js';
 
 export function createApp() {
   const app = express();
@@ -55,7 +60,11 @@ export function createApp() {
   app.use('/api/v1/nav', navRouter);
   app.use('/api/v1/org', orgRouter);
   app.use('/api/v1/org', treeRouter);
-  app.use('/api/v1/savings', savingsRouter);
+  // Demo mode (placeholder Supabase env / tests) serves the in-memory store;
+  // a configured project gets the real Supabase-backed router.
+  app.use('/api/v1/savings', isDemoMode() ? savingsDemoRouter : savingsRouter);
+  app.use('/api/v1/loans', isDemoMode() ? loansDemoRouter : loansRouter);
+  if (isDemoMode()) app.use('/api/v1/collection', collectionDemoRouter);
 
   // 404 for unknown API paths.
   app.use((_req, res) => {
