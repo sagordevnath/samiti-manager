@@ -8,21 +8,37 @@
 import { randomUUID } from 'node:crypto';
 import {
   allocateCollectionPayment,
+  checkCollectionDate,
+  COLLECTION_RULE_DEFAULTS,
+  computeClosureRebate,
   rowTotalDue,
+  scanEntriesForFraud,
   type AllocationOrder,
   type CashHandover,
   type CashSummary,
   type CollectionAllocation,
+  type CollectionDashboard,
   type CollectionEntryInput,
+  type CollectionEntryMeta,
   type CollectionEntryResponse,
   type CollectionReceipt,
+  type CollectionReversal,
   type CollectionSheet,
   type CollectionSheetRow,
   type CollectionSyncInput,
   type CollectionSyncResult,
+  type FraudFlag,
   type JournalEntryDraft,
+  type LoanClosure,
+  type LoanClosureQuote,
+  type LoanReschedule,
+  type LoanRescheduleCreateInput,
+  type LoanWriteOff,
+  type LoanWriteOffCreateInput,
+  type SamityCollectionRollup,
 } from '@samity/shared';
-import { LoanDemoError, type LoanDemoData } from './loan-store.js';
+import { DEMO_AUTH_USER_ID } from './demo.js';
+import { LoanDemoError, demoMemberName, type LoanDemoData } from './loan-store.js';
 import { postDemoTx, savingsDemoStore, SavingsDemoError } from './savings-store.js';
 
 // Demo constants aligned with loan-store / savings-store.
@@ -37,6 +53,9 @@ const demoMemberNames: Record<string, { name: string; code: string }> = {
   [MEMBER_B]: { name: 'Salma Khatun', code: 'MYM-26-00014' },
   [MEMBER_C]: { name: 'Jahanara Parvin', code: 'DHK-26-00042' },
 };
+
+/** Demo meeting point for the Dhaka branch samity (Dhanmondi). */
+export const DEMO_MEETING_POINT = { lat: 23.7806, lng: 90.4193 } as const;
 
 /** The demo field officer who collects and hands over. */
 export const DEMO_OFFICER_ID = '00000000-0000-4000-8000-0000000002a1';
@@ -70,10 +89,23 @@ export interface CollectionDemoData {
     collectedBy: string | null;
     capturedAt: string | null;
     note: string | null;
+    meta: CollectionEntryMeta | null;
     createdAt: string;
   }>;
   handovers: CashHandover[];
   receiptSeq: Record<string, number>;
+  /** 8) Date-rule config (org-level, mutable via API). */
+  rules: { backdateLimitDays: number; futureLimitDays: number; identicalAmountMinMembers: number };
+  /** 6) Branch-Manager reversals of wrong entries. */
+  reversals: CollectionReversal[];
+  /** 5) Reschedules + write-offs + closures (settlement requests). */
+  reschedules: LoanReschedule[];
+  writeOffs: LoanWriteOff[];
+  closures: LoanClosure[];
+  /** 9) Fraud flags from the post-entry scan. */
+  fraudFlags: FraudFlag[];
+  /** Reverse map: entry id → application id (reversal un-applies). */
+  entryApplication: Record<string, string | null>;
 }
 
 const globalRef = globalThis as unknown as { __collectionDemoData?: CollectionDemoData };
@@ -88,6 +120,13 @@ export function collectionDemoStore(): CollectionDemoData {
     entries: [],
     handovers: [],
     receiptSeq: {},
+    rules: { ...COLLECTION_RULE_DEFAULTS, identicalAmountMinMembers: 2 },
+    reversals: [],
+    reschedules: [],
+    writeOffs: [],
+    closures: [],
+    fraudFlags: [],
+    entryApplication: {},
   };
   return globalRef.__collectionDemoData;
 }
@@ -100,7 +139,7 @@ export function resetCollectionDemoStore(): void {
 export class CollectionDemoError extends Error {
   constructor(
     public status: number,
-    public code: string,
+    public code: import('@samity/shared').ErrorCode,
     message: string,
   ) {
     super(message);
@@ -264,8 +303,21 @@ export function postDemoCollectionEntry(
     return { duplicate: true, receipt: demoReceiptFrom(existing) };
   }
 
+  // ── 8) Date rule engine: no future dating, backdate within the org limit ──
+  const dateCheck = checkCollectionDate(input.meetingDate, todayStr(), coll.rules.backdateLimitDays);
+  if (!dateCheck.allowed) {
+    throw new CollectionDemoError(
+      422,
+      dateCheck.reason === 'future_dated' ? 'FUTURE_DATED' : 'BACKDATED',
+      dateCheck.reason === 'future_dated'
+        ? 'ভবিষ্যতের তারিখ দেওয়া যাবে না / Future-dated collections are blocked'
+        : `ব্যাকডেট সীমা ${dateCheck.maxDays} দিন / Backdating beyond ${dateCheck.maxDays} day(s) is blocked`,
+    );
+  }
+
   const app = store.applications.find((a) => a.memberId === input.memberId && ['approved', 'disbursed'].includes(a.status));
-  const branchId = app?.branchId ?? BRANCH_DHAKA;
+  const branchId =
+    app?.branchId ?? savingsDemoStore().accounts.find((a) => a.member_id === input.memberId)?.branch_id ?? BRANCH_DHAKA;
   const sheet = buildDemoSheet({ store, meetingDate: input.meetingDate, branchId, allocationOrder: ctx.allocationOrder });
   const row = sheet.rows.find((r) => r.memberId === input.memberId);
   if (!row) throw new CollectionDemoError(404, 'NOT_FOUND', 'Member not found on the collection sheet');
@@ -303,7 +355,8 @@ export function postDemoCollectionEntry(
         userId: ctx.officerId,
       });
     } catch (err) {
-      if (err instanceof SavingsDemoError) throw new CollectionDemoError(err.status, err.code, err.message);
+      if (err instanceof SavingsDemoError)
+        throw new CollectionDemoError(err.status, err.code as import('@samity/shared').ErrorCode, err.message);
       throw err;
     }
   }
@@ -383,9 +436,12 @@ export function postDemoCollectionEntry(
     collectedBy: ctx.officerId,
     capturedAt: input.capturedAt ?? null,
     note: input.note ?? null,
+    meta: input.meta ?? null,
     createdAt: now,
   };
   coll.entries.push(entry);
+  coll.entryApplication[entry.id] = app?.id ?? null;
+  runFraudScan(store, coll, ctx.officerId, today);
 
   return { duplicate: false, receipt: demoReceiptFrom(entry) };
 }
@@ -581,3 +637,517 @@ export function listDemoHandovers(
 }
 
 export { todayStr };
+
+// ── 8) Rule config ──────────────────────────────────────────────────────────
+export function getDemoRules(coll: CollectionDemoData) {
+  return coll.rules;
+}
+
+export function updateDemoRules(
+  coll: CollectionDemoData,
+  patch: { backdateLimitDays?: number; futureLimitDays?: number },
+) {
+  if (patch.backdateLimitDays !== undefined) coll.rules.backdateLimitDays = patch.backdateLimitDays;
+  if (patch.futureLimitDays !== undefined) coll.rules.futureLimitDays = patch.futureLimitDays;
+  return coll.rules;
+}
+
+// ── 9) Fraud scan (runs after every posting) ────────────────────────────────
+function runFraudScan(
+  store: LoanDemoData,
+  coll: CollectionDemoData,
+  officerId: string | null,
+  meetingDate: string,
+): void {
+  const oid = officerId ?? DEMO_OFFICER_ID;
+  const dayEntries = coll.entries.filter((e) => e.collectedBy === oid && e.meetingDate === meetingDate);
+  if (dayEntries.length === 0) return;
+
+  // Peer totals: entries for the same members by *other* officers (any date).
+  const peerTotalsByMember: Record<string, string[]> = {};
+  for (const e of coll.entries) {
+    if (e.collectedBy === oid) continue;
+    (peerTotalsByMember[e.memberId] ??= []).push(
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+      String(Number(e.loanPaid) + Number(e.savingsPaid) + Number(e.extraPaid)),
+    );
+  }
+
+  const flags = scanEntriesForFraud({
+    entries: dayEntries.map((e) => ({
+      entryId: e.id,
+      receiptNo: e.receiptNo,
+      officerId: e.collectedBy ?? DEMO_OFFICER_ID,
+      memberId: e.memberId,
+      totalCollected: String(Number(e.loanPaid) + Number(e.savingsPaid) + Number(e.extraPaid)),
+      meta: e.meta,
+      createdAt: e.createdAt,
+    })),
+    peerTotalsByMember,
+    meetingPoint: DEMO_MEETING_POINT,
+    config: { identicalAmountMinMembers: coll.rules.identicalAmountMinMembers },
+  });
+
+  const seen = new Set(coll.fraudFlags.map((f) => `${f.entryId}:${f.rule}`));
+  for (const f of flags) {
+    if (seen.has(`${f.entryId}:${f.rule}`)) continue;
+    coll.fraudFlags.push({
+      id: randomUUID(),
+      entryId: f.entryId,
+      receiptNo: f.receiptNo,
+      rule: f.rule,
+      severity: f.severity,
+      detail: f.detail,
+      detailBn: f.detailBn,
+      createdAt: new Date().toISOString(),
+      reviewed: false,
+      reviewedBy: null,
+    });
+  }
+}
+
+export function listDemoFraudFlags(coll: CollectionDemoData, reviewed?: boolean): FraudFlag[] {
+  return reviewed === undefined ? coll.fraudFlags : coll.fraudFlags.filter((f) => f.reviewed === reviewed);
+}
+
+export function reviewDemoFraudFlag(
+  coll: CollectionDemoData,
+  flagId: string,
+  reviewerId: string | null,
+): FraudFlag {
+  const flag = coll.fraudFlags.find((f) => f.id === flagId);
+  if (!flag) throw new CollectionDemoError(404, 'NOT_FOUND', 'Fraud flag not found');
+  flag.reviewed = true;
+  flag.reviewedBy = reviewerId;
+  return flag;
+}
+
+// ── 6) Branch-Manager reversal of a wrong entry ─────────────────────────────
+export function reverseDemoEntry(
+  store: LoanDemoData,
+  coll: CollectionDemoData,
+  entryId: string,
+  reason: string,
+  reversedBy: string | null,
+): CollectionReversal {
+  if (coll.reversals.some((r) => r.entryId === entryId)) {
+    throw new CollectionDemoError(409, 'ALREADY_REVERSED', 'This entry has already been reversed');
+  }
+  const entry = coll.entries.find((e) => e.id === entryId);
+  if (!entry) throw new CollectionDemoError(404, 'NOT_FOUND', 'Entry not found');
+
+  const unapplied: CollectionReversal['unapplied'] = {
+    overdue: [],
+    current: '0.00',
+    savings: '0.00',
+    advance: '0.00',
+  };
+
+  // Un-apply the loan schedule rows.
+  const applicationId = coll.entryApplication[entryId] ?? null;
+  const rec = applicationId
+    ? store.disbursements.find((d) => d.applicationId === applicationId)
+    : undefined;
+  if (rec) {
+    for (const o of entry.allocation.overdueApplied) {
+      const row = rec.schedule.rows.find((x) => x.id === o.installmentId || x.seq === o.seq);
+      if (row) {
+        row.paidAmount = money(Math.max(num(row.paidAmount) - num(o.amount), 0));
+        row.paidAt = null;
+        unapplied.overdue.push({ seq: o.seq, amount: o.amount });
+      }
+    }
+    if (entry.allocation.currentApplied) {
+      const row = rec.schedule.rows.find(
+        (x) => x.id === entry.allocation.currentApplied?.installmentId || x.seq === entry.allocation.currentApplied?.seq,
+      );
+      if (row) {
+        row.paidAmount = money(Math.max(num(row.paidAmount) - num(entry.allocation.currentApplied.amount), 0));
+        row.paidAt = null;
+        unapplied.current = entry.allocation.currentApplied.amount;
+      }
+    }
+  }
+
+  // Reverse the savings deposit leg.
+  if (num(entry.allocation.savingsApplied) > 0) {
+    try {
+      const sheet = buildDemoSheet({
+        store,
+        meetingDate: entry.meetingDate,
+        branchId: entry.branchId,
+        allocationOrder: 'overdue_first',
+      });
+      const row = sheet.rows.find((r) => r.memberId === entry.memberId);
+      if (row?.savingsDue) {
+        postDemoTx(savingsDemoStore(), {
+          accountId: row.savingsDue.accountId,
+          type: 'withdrawal',
+          amount: entry.allocation.savingsApplied,
+          reference: `reversal:${entry.receiptNo}`,
+          note: 'ভুল এন্ট্রি বাতিল / Wrong-entry reversal',
+          userId: reversedBy,
+        });
+        unapplied.savings = entry.allocation.savingsApplied;
+      }
+    } catch (err) {
+      if (err instanceof SavingsDemoError) {
+        throw new CollectionDemoError(
+          err.status,
+          err.code as import('@samity/shared').ErrorCode,
+          `Savings reversal failed: ${err.message}`,
+        );
+      }
+      throw err;
+    }
+  }
+
+  // Advance credit is un-allocated.
+  unapplied.advance = entry.allocation.advanceApplied;
+  coll.advanceBalances[entry.memberId] = money(
+    Math.max(num(coll.advanceBalances[entry.memberId] ?? '0') - num(entry.allocation.advanceApplied), 0),
+  );
+
+  // Remove the journal entry (exact mirror of the posting) and the passbook line.
+  const jIdx = store.journals.findIndex((j) => j.memo.includes(entry.receiptNo));
+  if (jIdx >= 0) store.journals.splice(jIdx, 1);
+  const pIdx = store.passbookEntries.findIndex((p) => p.description.includes(entry.receiptNo));
+  if (pIdx >= 0) store.passbookEntries.splice(pIdx, 1);
+
+  const reversal: CollectionReversal = {
+    id: randomUUID(),
+    entryId,
+    receiptNo: entry.receiptNo,
+    reason,
+    reversedBy,
+    reversedAt: new Date().toISOString(),
+    unapplied,
+  };
+  coll.reversals.push(reversal);
+  return reversal;
+}
+
+// ── 5) Early closure with rebate ────────────────────────────────────────────
+interface ClosureCtx {
+  store: LoanDemoData;
+  closedBy: string | null;
+}
+
+function disbursedRecordFor(store: LoanDemoData, applicationId: string) {
+  const app = store.applications.find((a) => a.id === applicationId);
+  if (!app) throw new CollectionDemoError(404, 'NOT_FOUND', 'Loan application not found');
+  if (app.status !== 'disbursed') {
+    throw new CollectionDemoError(409, 'INVALID_STATUS', 'Only a disbursed loan can be closed early');
+  }
+  const rec = store.disbursements.find((d) => d.applicationId === applicationId && !d.cancelledAt);
+  if (!rec) throw new CollectionDemoError(409, 'INVALID_STATUS', 'No active disbursement for this loan');
+  return { app, rec };
+}
+
+export function demoClosureQuote(
+  store: LoanDemoData,
+  applicationId: string,
+  serviceDeductionPercent?: number,
+): LoanClosureQuote {
+  const { rec } = disbursedRecordFor(store, applicationId);
+  const q = computeClosureRebate({ rows: rec.schedule.rows, serviceDeductionPercent });
+  return { applicationId, loanNumber: rec.loanNumber, ...q };
+}
+
+export function closeDemoLoan(
+  ctx: ClosureCtx,
+  coll: CollectionDemoData,
+  applicationId: string,
+  serviceDeductionPercent?: number,
+): LoanClosure {
+  const { app, rec } = disbursedRecordFor(ctx.store, applicationId);
+  if (coll.closures.some((c) => c.applicationId === applicationId)) {
+    throw new CollectionDemoError(409, 'ALREADY_CLOSED', 'This loan is already closed');
+  }
+  const quote = computeClosureRebate({ rows: rec.schedule.rows, serviceDeductionPercent });
+  if (quote.remainingInstallments === 0) {
+    throw new CollectionDemoError(409, 'ALREADY_PAID', 'Every installment is already paid — no closure needed');
+  }
+
+  // Zero the remaining rows (rebate waives unearned interest net of deduction)
+  // and close the application.
+  for (const row of rec.schedule.rows) {
+    if (num(row.paidAmount) < num(row.total)) {
+      row.paidAmount = row.total;
+      row.paidAt = new Date().toISOString();
+    }
+  }
+  app.status = 'closed';
+
+  // Journal: debit cash (payoff + kept deduction), credit portfolio (principal),
+  // credit interest income (kept service deduction). Mirrors the DB trigger.
+  const lines: JournalEntryDraft['lines'] = [
+    { accountCode: '1010', accountName: 'Cash in Vault', debit: quote.closureAmount, credit: '0.00' },
+    { accountCode: '1200', accountName: 'Loan Portfolio', debit: '0.00', credit: quote.outstandingPrincipal },
+  ];
+  if (num(quote.serviceDeduction) > 0) {
+    lines.push({ accountCode: '4100', accountName: 'Interest Income', debit: '0.00', credit: quote.serviceDeduction });
+  }
+  ctx.store.journals.push({
+    entryDate: todayStr(),
+    sourceType: 'collection',
+    sourceId: applicationId,
+    memo: `Early closure ${rec.loanNumber ?? ''} — rebate ${quote.rebate}`,
+    lines,
+  });
+
+  const closure: LoanClosure = {
+    id: randomUUID(),
+    applicationId,
+    loanNumber: rec.loanNumber,
+    memberName: demoMemberName(app.memberId),
+    outstandingPrincipal: quote.outstandingPrincipal,
+    unearnedInterest: quote.unearnedInterest,
+    rebate: quote.rebate,
+    serviceDeduction: quote.serviceDeduction,
+    closureAmount: quote.closureAmount,
+    remainingInstallments: quote.remainingInstallments,
+    closedAt: new Date().toISOString(),
+    closedBy: ctx.closedBy,
+  };
+  coll.closures.push(closure);
+  return closure;
+}
+
+// ── 5) Reschedule (request → decision) ──────────────────────────────────────
+export function requestDemoReschedule(
+  store: LoanDemoData,
+  coll: CollectionDemoData,
+  input: LoanRescheduleCreateInput,
+  requestedBy: string | null,
+): LoanReschedule {
+  const { app, rec } = disbursedRecordFor(store, input.applicationId);
+  if (coll.reschedules.some((r) => r.applicationId === input.applicationId && r.status !== 'rejected')) {
+    throw new CollectionDemoError(409, 'ALREADY_RESCHEDULED', 'This loan already has a reschedule request');
+  }
+  // Move every unpaid row by shiftInstallments × its cadence gap.
+  const unpaid = rec.schedule.rows.filter((r) => num(r.paidAmount) < num(r.total));
+  if (unpaid.length === 0) {
+    throw new CollectionDemoError(409, 'ALREADY_PAID', 'Nothing left to reschedule');
+  }
+  const gap =
+    unpaid.length >= 2
+      ? Math.max(Math.round((Date.parse(unpaid[1]!.dueDate) - Date.parse(unpaid[0]!.dueDate)) / 86_400_000), 1)
+      : 7;
+  const movedRows = unpaid.map((r) => ({
+    seq: r.seq,
+    oldDueDate: r.dueDate,
+    newDueDate: new Date(Date.parse(r.dueDate) + input.shiftInstallments * gap * 86_400_000)
+      .toISOString()
+      .slice(0, 10),
+  }));
+
+  const reschedule: LoanReschedule = {
+    id: randomUUID(),
+    applicationId: input.applicationId,
+    loanNumber: rec.loanNumber,
+    memberName: demoMemberName(app.memberId),
+    shiftInstallments: input.shiftInstallments,
+    reason: input.reason,
+    note: input.note,
+    movedRows,
+    requestedBy,
+    requestedAt: new Date().toISOString(),
+    status: 'pending',
+    decidedBy: null,
+    decidedAt: null,
+  };
+  coll.reschedules.push(reschedule);
+  return reschedule;
+}
+
+export function decideDemoReschedule(
+  store: LoanDemoData,
+  coll: CollectionDemoData,
+  id: string,
+  decision: 'approved' | 'rejected',
+  decidedBy: string | null,
+): LoanReschedule {
+  const r = coll.reschedules.find((x) => x.id === id);
+  if (!r) throw new CollectionDemoError(404, 'NOT_FOUND', 'Reschedule request not found');
+  if (r.status !== 'pending') throw new CollectionDemoError(409, 'ALREADY_DECIDED', 'Already decided');
+  r.status = decision;
+  r.decidedBy = decidedBy;
+  r.decidedAt = new Date().toISOString();
+  if (decision === 'approved') {
+    const rec = store.disbursements.find((d) => d.applicationId === r.applicationId && !d.cancelledAt);
+    for (const m of r.movedRows) {
+      const row = rec?.schedule.rows.find((x) => x.seq === m.seq);
+      if (row) {
+        row.originalDueDate = row.dueDate;
+        row.dueDate = m.newDueDate;
+        row.shifted = true;
+        row.shiftReason = `reschedule: ${r.reason}`;
+      }
+    }
+  }
+  return r;
+}
+
+// ── 5) Write-off (request → approve) ────────────────────────────────────────
+export function requestDemoWriteOff(
+  store: LoanDemoData,
+  coll: CollectionDemoData,
+  input: LoanWriteOffCreateInput,
+  requestedBy: string | null,
+): LoanWriteOff {
+  const { app, rec } = disbursedRecordFor(store, input.applicationId);
+  if (coll.writeOffs.some((w) => w.applicationId === input.applicationId)) {
+    throw new CollectionDemoError(409, 'ALREADY_REQUESTED', 'A write-off already exists for this loan');
+  }
+  const outstanding = rec.schedule.rows.reduce(
+    (s, r) => s + Math.max(num(r.total) - num(r.paidAmount), 0),
+    0,
+  );
+  if (outstanding <= 0) {
+    throw new CollectionDemoError(409, 'ALREADY_PAID', 'Nothing outstanding — use early closure instead');
+  }
+  const w: LoanWriteOff = {
+    id: randomUUID(),
+    applicationId: input.applicationId,
+    loanNumber: rec.loanNumber,
+    memberName: demoMemberName(app.memberId),
+    outstandingAmount: money(outstanding),
+    reason: input.reason,
+    note: input.note,
+    requestedBy,
+    requestedAt: new Date().toISOString(),
+    status: 'pending',
+    decidedBy: null,
+    decidedAt: null,
+    decisionNote: null,
+  };
+  coll.writeOffs.push(w);
+  return w;
+}
+
+export function decideDemoWriteOff(
+  store: LoanDemoData,
+  coll: CollectionDemoData,
+  id: string,
+  decision: 'recommended' | 'approved' | 'rejected',
+  decidedBy: string | null,
+  decisionNote: string | null,
+): LoanWriteOff {
+  const w = coll.writeOffs.find((x) => x.id === id);
+  if (!w) throw new CollectionDemoError(404, 'NOT_FOUND', 'Write-off request not found');
+  if (w.status === 'approved' || w.status === 'rejected') {
+    throw new CollectionDemoError(409, 'ALREADY_DECIDED', 'Already finally decided');
+  }
+  w.status = decision;
+  w.decidedBy = decidedBy;
+  w.decidedAt = new Date().toISOString();
+  w.decisionNote = decisionNote;
+  if (decision === 'approved') {
+    const app = store.applications.find((a) => a.id === w.applicationId);
+    if (app) app.status = 'written_off';
+    const rec = store.disbursements.find((d) => d.applicationId === w.applicationId && !d.cancelledAt);
+    if (rec) {
+      for (const row of rec.schedule.rows) {
+        if (num(row.paidAmount) < num(row.total)) {
+          row.paidAmount = row.total;
+          row.paidAt = new Date().toISOString();
+        }
+      }
+    }
+    // Journal: debit write-off expense (6200) / credit loan portfolio (1200).
+    store.journals.push({
+      entryDate: todayStr(),
+      sourceType: 'collection',
+      sourceId: w.applicationId,
+      memo: `Write-off ${w.loanNumber ?? ''} — ${w.reason}`,
+      lines: [
+        { accountCode: '6200', accountName: 'Loan Write-off Expense', debit: w.outstandingAmount, credit: '0.00' },
+        { accountCode: '1200', accountName: 'Loan Portfolio', debit: '0.00', credit: w.outstandingAmount },
+      ],
+    });
+  }
+  return w;
+}
+
+// ── 7) BM dashboard rollups ─────────────────────────────────────────────────
+export function demoCollectionDashboard(
+  store: LoanDemoData,
+  coll: CollectionDemoData,
+  meetingDate: string,
+  branchId: string,
+): CollectionDashboard {
+  const sheet = buildDemoSheet({ store, meetingDate, branchId, allocationOrder: 'overdue_first' });
+
+  const collectedByMember = new Map<string, number>();
+  let collectedTotal = 0;
+  let entriesCount = 0;
+  for (const e of coll.entries.filter((x) => x.meetingDate === meetingDate && x.branchId === branchId)) {
+    const t = num(e.loanPaid) + num(e.savingsPaid) + num(e.extraPaid);
+    collectedByMember.set(e.memberId, (collectedByMember.get(e.memberId) ?? 0) + t);
+    collectedTotal += t;
+    entriesCount += 1;
+  }
+
+  // "Expected" is the pre-collection demand: what the sheet shows now plus
+  // what today's entries already collected for that member (postings shrink
+  // the live dues, so the rollup reconstructs the opening expectation).
+  const expectedFor = (memberId: string, totalDue: string) =>
+    num(totalDue) + (collectedByMember.get(memberId) ?? 0);
+
+  const samityMap = new Map<string, SamityCollectionRollup>();
+  for (const r of sheet.rows) {
+    const key = r.samityId ?? 'none';
+    const cur = samityMap.get(key) ?? {
+      samityId: key,
+      samityName: r.samityName ?? 'অবিন্যস্ত / Unassigned',
+      officerId: sheet.officerId,
+      expected: '0.00',
+      collected: '0.00',
+      membersPresent: 0,
+      membersTotal: 0,
+    };
+    cur.expected = money(num(cur.expected) + expectedFor(r.memberId, r.totalDue));
+    const c = collectedByMember.get(r.memberId) ?? 0;
+    cur.collected = money(num(cur.collected) + c);
+    cur.membersTotal += 1;
+    if (c > 0) cur.membersPresent += 1;
+    samityMap.set(key, cur);
+  }
+
+  const expectedTotal = sheet.rows.reduce((s, r) => s + expectedFor(r.memberId, r.totalDue), 0);
+
+  // Officer rollup: one bucket per officer who owns meetings or posted today.
+  const byOfficer = [
+    { officerId: DEMO_AUTH_USER_ID, officerName: 'Demo Admin (কেন্দ্র পরিচালক)' },
+    { officerId: DEMO_OFFICER_ID, officerName: DEMO_OFFICER_NAME },
+  ]
+    .map((o) => {
+      const officerEntries = coll.entries.filter(
+        (x) => x.meetingDate === meetingDate && x.branchId === branchId && x.collectedBy === o.officerId,
+      );
+      const c = officerEntries.reduce((s, e) => s + num(e.loanPaid) + num(e.savingsPaid) + num(e.extraPaid), 0);
+      return {
+        officerId: o.officerId,
+        officerName: o.officerName,
+        expected: money(expectedTotal),
+        collected: money(c),
+        entriesCount: officerEntries.length,
+        collectionRate: expectedTotal > 0 ? c / expectedTotal : 0,
+      };
+    });
+
+  return {
+    meetingDate,
+    branchId,
+    generatedAt: new Date().toISOString(),
+    totals: {
+      expected: money(expectedTotal),
+      collected: money(collectedTotal),
+      entriesCount,
+      collectionRate: expectedTotal > 0 ? collectedTotal / expectedTotal : 0,
+    },
+    byOfficer,
+    bySamity: [...samityMap.values()],
+  };
+}

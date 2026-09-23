@@ -22,6 +22,11 @@ import { DisbursementPage } from '@/pages/DisbursementPage';
 import { CollectionSheetPage } from '@/pages/CollectionSheetPage';
 import { CashHandoverPage } from '@/pages/CashHandoverPage';
 import { ReceiptPage } from '@/pages/ReceiptPage';
+import { AccountingPage } from '@/pages/AccountingPage';
+import { AccountingVoucherPrintPage } from '@/pages/AccountingVoucherPrintPage';
+import { HrPage } from '@/pages/HrPage';
+import { DelinquencyPage } from '@/pages/DelinquencyPage';
+import { RecoveryPage } from '@/pages/RecoveryPage';
 import { VoucherPage } from '@/pages/VoucherPage';
 import { AgreementPage } from '@/pages/AgreementPage';
 
@@ -49,6 +54,11 @@ export default function App() {
         <Route path="/collection" element={<CollectionSheetPage />} />
         <Route path="/collection/cash" element={<CashHandoverPage />} />
         <Route path="/collection/receipt/:idempotencyKey" element={<ReceiptPage />} />
+        <Route path="/delinquency" element={<DelinquencyPage />} />
+        <Route path="/delinquency/recovery" element={<RecoveryPage />} />
+        <Route path="/accounting" element={<AccountingPage />} />
+        <Route path="/accounting/vouchers/:voucherId/print" element={<AccountingVoucherPrintPage />} />
+        <Route path="/hr" element={<HrPage />} />
         <Route path="/loans/disbursements/:applicationId/voucher" element={<VoucherPage />} />
         <Route path="/loans/disbursements/:applicationId/agreement" element={<AgreementPage />} />
         <Route path="/loans/:id" element={<LoanDetailPage />} />

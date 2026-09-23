@@ -17,7 +17,11 @@ import { savingsRouter } from './routes/savings.routes.js';
 import { savingsDemoRouter } from './routes/savings.demo.routes.js';
 import { loansRouter } from './routes/loans.routes.js';
 import { loansDemoRouter } from './routes/loans.demo.routes.js';
+import { accountingDemoRouter } from './routes/accounting.demo.routes.js';
+import { hrDemoRouter } from './routes/hr.demo.routes.js';
 import { collectionDemoRouter } from './routes/collection.demo.routes.js';
+import { delinquencyRouter } from './routes/delinquency.routes.js';
+import { delinquencyRecoveryRouter } from './routes/delinquency-recovery.routes.js';
 import { isDemoMode } from './lib/demo.js';
 
 export function createApp() {
@@ -65,6 +69,10 @@ export function createApp() {
   app.use('/api/v1/savings', isDemoMode() ? savingsDemoRouter : savingsRouter);
   app.use('/api/v1/loans', isDemoMode() ? loansDemoRouter : loansRouter);
   if (isDemoMode()) app.use('/api/v1/collection', collectionDemoRouter);
+  if (isDemoMode()) app.use('/api/v1/delinquency', delinquencyRouter);
+  if (isDemoMode()) app.use('/api/v1/delinquency', delinquencyRecoveryRouter);
+  if (isDemoMode()) app.use('/api/v1/accounting', accountingDemoRouter);
+  if (isDemoMode()) app.use('/api/v1/hr', hrDemoRouter);
 
   // 404 for unknown API paths.
   app.use((_req, res) => {

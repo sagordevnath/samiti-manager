@@ -28,6 +28,7 @@ const STATUS_BN: Record<LoanApplicationStatus, string> = {
   rejected: 'প্রত্যাখ্যাত',
   disbursed: 'বিতরণকৃত',
   closed: 'বন্ধ',
+  written_off: 'অপুনরুদ্ধারযোগ্য (লেখা হয়েছে)',
 };
 
 const STATUS_STYLE: Record<LoanApplicationStatus, string> = {
@@ -40,6 +41,7 @@ const STATUS_STYLE: Record<LoanApplicationStatus, string> = {
   rejected: 'bg-red-50 text-red-700',
   disbursed: 'bg-teal-50 text-teal-700',
   closed: 'bg-muted text-muted-foreground',
+  written_off: 'bg-rose-100 text-rose-800',
 };
 
 export function LoansPage() {

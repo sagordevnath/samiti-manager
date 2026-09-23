@@ -1,6 +1,70 @@
 import { describe, expect, it } from 'vitest';
+import {
+  DEFAULT_CHART_OF_ACCOUNTS,
+  DEFAULT_EVENT_MAPPINGS,
+  buildEventJournalLines,
+  cashDifference,
+  computeTrialBalance,
+  glAccountSchema,
+  pettyCashAllowed,
+  voucherCreateSchema,
+} from '../src/accounting';
+import {
+  amountInWords,
+  amountInWordsBn,
+  amountInWordsEn,
+  buildBudgetVsActual,
+  buildBalanceSheet,
+  buildFundStatement,
+  buildIncomeExpenditure,
+  buildLedger,
+  buildReceiptsPayments,
+  buildTransferLines,
+  canReopenPeriod,
+  checkVoucherPostingRules,
+  periodHasVouchers,
+  VOUCHER_PRINT_LABELS,
+  VOUCHER_TYPE_LABELS,
+  type Voucher,
+} from '../src/accounting-ops';
+import {
+  applicantFinalScore,
+  canGrantLeave,
+  daysBetweenInclusive,
+  deriveAttendanceStatus,
+  isFieldStaff,
+  leaveBalance,
+  probationDue,
+  probationEndDateFor,
+  renderMovementOrder,
+  renderOfferLetter,
+} from '../src/hr';
+import {
+  ASSET_CLASSES,
+  DELINQUENCY_BUCKETS,
+  assetClassForDpd,
+  bucketForDaysPastDue,
+  computePar,
+  onTimeRepaymentRate,
+  provisionPercentFor,
+  worklistLevelFor,
+  type ClassifiedLoan,
+} from '../src/delinquency.js';
+import {
+  attendanceFalling,
+  countConsecutiveMissed,
+  renderLegalNoticeBn,
+  ROOT_CAUSES,
+  type RootCause,
+} from '../src/delinquency-recovery.js';
 import { formatMoney, toAsciiDigits, toBanglaDigits } from '../src/format';
 import { allocateCollectionPayment, rowTotalDue } from '../src/collection-engine';
+import {
+  checkCollectionDate,
+  CollectionEntryMeta,
+  computeClosureRebate,
+  scanEntriesForFraud,
+} from '../src/collection-settlement';
 import { collectionEntrySchema } from '../src/collection';
 import {
   buildUtilizationReport,
@@ -1060,5 +1124,691 @@ describe('collection allocation engine', () => {
     expect(collectionEntrySchema.safeParse({ ...base, loanPaid: 'abc' }).success).toBe(false);
     expect(collectionEntrySchema.safeParse({ ...base, loanPaid: '-5' }).success).toBe(false);
     expect(collectionEntrySchema.safeParse({ ...base, idempotencyKey: 'not-a-uuid' }).success).toBe(false);
+  });
+});
+
+describe('collection settlement & control', () => {
+  const schedule = [
+    { seq: 1, total: '525.00', interest: '100.00', paidAmount: '525.00' },
+    { seq: 2, total: '525.00', interest: '100.00', paidAmount: '525.00' },
+    { seq: 3, total: '525.00', interest: '100.00' },
+    { seq: 4, total: '525.00', interest: '100.00' },
+  ];
+
+  it('computes closure rebate: unearned interest minus service deduction', () => {
+    const q = computeClosureRebate({ rows: schedule, serviceDeductionPercent: 10 });
+    expect(q.remainingInstallments).toBe(2);
+    // outstanding = 1050, unearned = 200, deduction = 20, rebate = 180
+    expect(q.unearnedInterest).toBe('200.00');
+    expect(q.serviceDeduction).toBe('20.00');
+    expect(q.rebate).toBe('180.00');
+    expect(q.outstandingPrincipal).toBe('850.00');
+    expect(q.closureAmount).toBe('870.00'); // principal 850 + service 20
+  });
+
+  it('treats partially paid rows as open in the rebate quote', () => {
+    const withPartial = schedule.map((r) => (r.seq === 3 ? { ...r, paidAmount: '225.00' } : r));
+    const q = computeClosureRebate({ rows: withPartial });
+    expect(q.remainingInstallments).toBe(2); // seq 3 and 4 still open
+    expect(q.unearnedInterest).toBe('200.00');
+  });
+
+  it('date rule blocks future dating and deep backdating', () => {
+    expect(checkCollectionDate('2026-09-22', '2026-09-22')).toEqual({ allowed: true });
+    expect(checkCollectionDate('2026-09-20', '2026-09-22')).toEqual({ allowed: true }); // within 2 days
+    expect(checkCollectionDate('2026-09-19', '2026-09-22')).toEqual({
+      allowed: false, reason: 'backdated', maxDays: 2,
+    });
+    expect(checkCollectionDate('2026-09-23', '2026-09-22')).toEqual({
+      allowed: false, reason: 'future_dated', maxDays: 0,
+    });
+  });
+
+  it('flags identical amounts across many members and GPS outliers', () => {
+    const mk = (i: number, total: string, meta: CollectionEntryMeta | null) => ({
+      entryId: `e${i}`, receiptNo: `R${i}`, officerId: 'o1', memberId: `m${i}`,
+      totalCollected: total, meta, createdAt: '2026-09-22T10:00:00Z',
+    });
+    const entries = [
+      mk(1, '500.00', { lat: 23.8, lng: 90.4 }),
+      mk(2, '500.00', { lat: 23.8, lng: 90.4 }),
+      mk(3, '500.00', { lat: 23.8, lng: 90.4 }),
+      mk(4, '500.00', { lat: 23.8, lng: 90.4 }),
+      mk(5, '500.00', { lat: 23.801, lng: 90.402 }),
+      mk(6, '700.00', { lat: 24.0, lng: 90.9 }), // ~60km away
+    ];
+    const flags = scanEntriesForFraud({
+      entries,
+      peerTotalsByMember: {},
+      meetingPoint: { lat: 23.8, lng: 90.4 },
+    });
+    const identical = flags.find((f) => f.rule === 'identical_amounts');
+    expect(identical?.severity).toBe('high');
+    const gps = flags.filter((f) => f.rule === 'outside_meeting_radius');
+    expect(gps).toHaveLength(1);
+    expect(Number(gps[0]?.detail.match(/Captured (\d+) m/)?.[1] ?? 0)).toBeGreaterThan(50_000);
+  });
+
+  it('keeps normal collections clean', () => {
+    const entries = [1, 2, 3].map((i) => ({
+      entryId: `e${i}`, receiptNo: `R${i}`, officerId: 'o1', memberId: `m${i}`,
+      totalCollected: `${i * 100}.00`, meta: { lat: 23.8, lng: 90.4 }, createdAt: 'x',
+    }));
+    expect(
+      scanEntriesForFraud({ entries, peerTotalsByMember: {}, meetingPoint: { lat: 23.8, lng: 90.4 } }),
+    ).toEqual([]);
+  });
+});
+
+describe('delinquency classification (shared engine)', () => {
+  it('buckets days past per the editable settings', () => {
+    expect(DELINQUENCY_BUCKETS.length).toBe(5);
+    expect(bucketForDaysPastDue(0)).toBe('regular');
+    expect(bucketForDaysPastDue(1)).toBe('d1_30');
+    expect(bucketForDaysPastDue(30)).toBe('d1_30');
+    expect(bucketForDaysPastDue(31)).toBe('d31_90');
+    expect(bucketForDaysPastDue(90)).toBe('d31_90');
+    expect(bucketForDaysPastDue(91)).toBe('d91_180');
+    expect(bucketForDaysPastDue(180)).toBe('d91_180');
+    expect(bucketForDaysPastDue(181)).toBe('d180_plus');
+    // Editable bounds: raise the first bucket to 15 days.
+    const s = { ...{ buckets: { d1_30: 15, d31_90: 60, d91_180: 120 }, provisioning: { standard: 0, substandard: 20, doubtful: 50, bad: 100 }, assetClassByDpd: { substandard: 16, doubtful: 61, bad: 121 }, escalateToBmDays: 3, escalateToAmDays: 15 } };
+    expect(bucketForDaysPastDue(16, s)).toBe('d31_90');
+    expect(bucketForDaysPastDue(15, s)).toBe('d1_30');
+  });
+
+  it('maps asset classes and provisioning percentages', () => {
+    expect(ASSET_CLASSES).toEqual(['standard', 'substandard', 'doubtful', 'bad']);
+    expect(assetClassForDpd(0)).toBe('standard');
+    expect(assetClassForDpd(45)).toBe('substandard');
+    expect(assetClassForDpd(120)).toBe('doubtful');
+    expect(assetClassForDpd(200)).toBe('bad');
+    expect(provisionPercentFor('standard')).toBe(0);
+    expect(provisionPercentFor('substandard')).toBe(25);
+    expect(provisionPercentFor('doubtful')).toBe(50);
+    expect(provisionPercentFor('bad')).toBe(100);
+    // Editable provisioning.
+    expect(provisionPercentFor('substandard', { ...{ provisioning: { standard: 0, substandard: 10, doubtful: 40, bad: 90 } } } as never)).toBe(10);
+  });
+
+  it('escalates by days past due', () => {
+    expect(worklistLevelFor(1)).toBe('field_officer');
+    expect(worklistLevelFor(3)).toBe('field_officer');
+    expect(worklistLevelFor(4)).toBe('branch_manager');
+    expect(worklistLevelFor(15)).toBe('branch_manager');
+    expect(worklistLevelFor(16)).toBe('area_manager');
+  });
+
+  it('computes on-time repayment rate only for installments already due', () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const past = (d: number) => new Date(Date.now() - d * 86_400_000).toISOString().slice(0, 10);
+    const future = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString().slice(0, 10);
+    const rows = [
+      { dueDate: past(10), paidAt: `${past(10)}T10:00:00Z`, total: '100.00', paidAmount: '100.00' }, // on time
+      { dueDate: past(5), paidAt: `${past(2)}T10:00:00Z`, total: '100.00', paidAmount: '100.00' }, // late
+      { dueDate: past(2), paidAt: null, total: '100.00', paidAmount: '0.00' }, // unpaid
+      { dueDate: future(3), paidAt: null, total: '100.00', paidAmount: '0.00' }, // not yet due
+    ];
+    const rate = onTimeRepaymentRate(rows);
+    expect(rate).toBeCloseTo(1 / 3, 4);
+  });
+
+  it('computes PAR aggregates per scope', () => {
+    const loan = (dpd: number, outstanding: string): ClassifiedLoan => ({
+      applicationId: `a-${dpd}`, loanNumber: null, memberId: 'm1', memberName: 'x', memberCode: 'c',
+      branchId: 'b1', samityId: null, officerId: null, productName: null, disbursedOn: '2026-01-01',
+      outstanding, overduePrincipal: '0.00', overdueInterest: '0.00', overdueTotal: '0.00',
+      daysPastDue: dpd, bucket: bucketForDaysPastDue(dpd), assetClass: assetClassForDpd(dpd),
+      provisionPercent: 0, provisionAmount: '0.00', oldestUnpaidDueDate: null,
+    });
+    const loans = [loan(0, '1000'), loan(5, '500'), loan(45, '300'), loan(95, '200')];
+    const par = computePar('branch', 'b1', 'Dhaka', loans);
+    expect(par.outstandingTotal).toBe('2000.00');
+    expect(par.atRisk).toBe('1000.00'); // 500 + 300 + 200
+    expect(par.par1).toBeCloseTo(0.5, 4);
+    expect(par.par30).toBeCloseTo(0.25, 4); // 300 + 200
+    expect(par.par90).toBeCloseTo(0.1, 4); // 200
+    expect(par.loansAtRisk).toBe(3);
+  });
+});
+
+describe('delinquency recovery (shared engine)', () => {
+  const past = (d: number) => new Date(Date.now() - d * 86_400_000).toISOString().slice(0, 10);
+
+  it('covers all seven root causes with Bangla labels', () => {
+    expect(ROOT_CAUSES).toEqual([
+      'business_failure', 'illness', 'flood_disaster', 'migration',
+      'diversion_of_funds', 'staff_weakness', 'over_lending',
+    ]);
+  });
+
+  it('counts consecutive missed installments', () => {
+    const rows = [
+      { seq: 1, dueDate: past(28), total: '100', paidAmount: '100' }, // paid
+      { seq: 2, dueDate: past(21), total: '100' }, // missed
+      { seq: 3, dueDate: past(14), total: '100' }, // missed
+      { seq: 4, dueDate: past(7), total: '100' }, // missed → 3 consecutive
+      { seq: 5, dueDate: past(-7), total: '100' }, // future
+    ];
+    expect(countConsecutiveMissed(rows, past(0))).toBe(3);
+    // A break in the chain resets the streak.
+    const broken = [
+      { seq: 1, dueDate: past(21), total: '100' }, // missed
+      { seq: 2, dueDate: past(14), total: '100', paidAmount: '100' }, // paid
+      { seq: 3, dueDate: past(7), total: '100' }, // missed
+    ];
+    expect(countConsecutiveMissed(broken, past(0))).toBe(1);
+  });
+
+  it('flags falling samity attendance only past the drop threshold', () => {
+    const steady = [0.9, 0.9, 0.9, 0.9];
+    const falling = [0.95, 0.9, 0.7, 0.6];
+    expect(attendanceFalling(steady).falling).toBe(false);
+    expect(attendanceFalling(falling).falling).toBe(true);
+    expect(attendanceFalling(falling).drop).toBeGreaterThan(0.1);
+    // Too few meetings → no signal yet.
+    expect(attendanceFalling([0.9, 0.5]).falling).toBe(false);
+  });
+
+  it('renders the Bangla legal notice with interpolated figures', () => {
+    const body = renderLegalNoticeBn({
+      orgName: 'সমিটি ডেমো সমবায় সমিতি',
+      branchName: 'ধানমন্ডি শাখা',
+      memberName: 'জাহানারা পারভীন',
+      memberAddress: 'ধানমন্ডি, ঢাকা',
+      loanNumber: 'LN-DHK-26-0001',
+      overdueTotal: '1050.00',
+      outstanding: '11000.00',
+      issuedOn: '2026-09-23',
+      replyWithinDays: 7,
+    });
+    expect(body).toContain('জাহানারা পারভীন');
+    expect(body).toContain('৳1050.00');
+    expect(body).toContain('7 দিনের মধ্যে');
+    expect(body).toContain('আইনানুগ ব্যবস্থা');
+  });
+});
+
+// ── Accounting module ─────────────────────────────────────────────────────────
+describe('accounting — chart of accounts', () => {
+  it('covers every code already used by module auto-postings', () => {
+    const codes = new Set(DEFAULT_CHART_OF_ACCOUNTS.map((a) => a.code));
+    for (const c of ['1010', '1015', '1020', '1030', '1200', '1300', '2100', '2200', '2300', '3100', '4100', '4200', '4220', '6100', '6200', '6210', '7100']) {
+      expect(codes.has(c)).toBe(true);
+    }
+    expect(DEFAULT_CHART_OF_ACCOUNTS.length).toBeGreaterThanOrEqual(30);
+  });
+
+  it('rejects bad codes and unbalanced vouchers in Zod', () => {
+    expect(glAccountSchema.safeParse({ code: '10', name: 'x', nameBn: 'y', type: 'asset', category: 'cash' }).success).toBe(false);
+    const base = {
+      branchId: '00000000-0000-4000-8000-0000000000b1',
+      voucherType: 'journal',
+      voucherDate: '2026-09-23',
+      memo: 'Opening balance upload',
+      lines: [
+        { accountCode: '1010', debit: '100.00', credit: '0.00' },
+        { accountCode: '3100', debit: '0.00', credit: '100.00' },
+      ],
+    };
+    expect(voucherCreateSchema.safeParse(base).success).toBe(true);
+    // Unbalanced:
+    expect(voucherCreateSchema.safeParse({ ...base, lines: [...base.lines, { accountCode: '4500', debit: '0.00', credit: '50.00' }] }).success).toBe(false);
+    // Both debit and credit on one line:
+    expect(voucherCreateSchema.safeParse({ ...base, lines: [{ ...base.lines[0], credit: '10.00' }, base.lines[1]!] }).success).toBe(false);
+  });
+});
+
+describe('accounting — event-to-journal mappings', () => {
+  it('builds money-in lines as Dr settlement / Cr counter', () => {
+    const m = { settlementCode: '1010', counterCode: '2100' };
+    const lines = buildEventJournalLines(m, 'savings_deposit', '500.00', (c) => `A${c}`);
+    expect(lines[0]).toMatchObject({ accountCode: '1010', debit: '500.00' });
+    expect(lines[1]).toMatchObject({ accountCode: '2100', credit: '500.00' });
+  });
+
+  it('builds money-out lines flipped and every default mapping is two distinct codes', () => {
+    const lines = buildEventJournalLines({ settlementCode: '1010', counterCode: '6100' }, 'salary_payment', '12000.00', (c) => `A${c}`);
+    expect(lines[0]).toMatchObject({ accountCode: '6100', debit: '12000.00' });
+    expect(lines[1]).toMatchObject({ accountCode: '1010', credit: '12000.00' });
+    for (const m of DEFAULT_EVENT_MAPPINGS) {
+      expect(m.settlementCode).not.toBe(m.counterCode);
+    }
+  });
+});
+
+describe('accounting — cash book and petty cash', () => {
+  it('computes shortage/excess from the physical count', () => {
+    expect(cashDifference('575.00', '600.00')).toEqual({ difference: '-25.00', kind: 'shortage' });
+    expect(cashDifference('610.00', '600.00')).toEqual({ difference: '10.00', kind: 'excess' });
+    expect(cashDifference('600.00', '600.00')).toEqual({ difference: '0.00', kind: 'exact' });
+  });
+
+  it('blocks petty-cash spend over limit or over balance', () => {
+    expect(pettyCashAllowed('5000.00', '2000.00', '1500.00')).toBe(true);
+    expect(pettyCashAllowed('5000.00', '2000.00', '2500.00')).toBe(false);
+    expect(pettyCashAllowed('1000.00', '2000.00', '1500.00')).toBe(false);
+  });
+});
+
+describe('accounting — trial balance', () => {
+  it('nets debit-natured and credit-natured accounts and balances', () => {
+    const accounts = [
+      { code: '1010', name: 'Cash', nameBn: 'নগদ', type: 'asset' as const },
+      { code: '2100', name: 'Savings', nameBn: 'সঞ্চয়', type: 'liability' as const },
+      { code: '4100', name: 'Interest', nameBn: 'সুদ', type: 'income' as const },
+      { code: '6100', name: 'Salary', nameBn: 'বেতন', type: 'expense' as const },
+    ];
+    const lines = [
+      { accountCode: '1010', debit: '1000.00', credit: '300.00' },
+      { accountCode: '2100', debit: '0.00', credit: '500.00' },
+      { accountCode: '4100', debit: '0.00', credit: '300.00' },
+      { accountCode: '6100', debit: '100.00', credit: '0.00' },
+      { accountCode: '9999', debit: '999.00', credit: '0.00' }, // unknown — ignored
+    ];
+    const tb = computeTrialBalance(accounts, lines);
+    expect(tb.rows.find((r) => r.code === '1010')).toMatchObject({ balance: '700.00' });
+    expect(tb.rows.find((r) => r.code === '2100')).toMatchObject({ balance: '500.00' });
+    expect(tb.balanced).toBe(true);
+    expect(tb.totalDebit).toBe(tb.totalCredit);
+  });
+});
+
+// ── Accounting ops (requirements 6–10) ──────────────────────────────────────
+describe('accounting ops', () => {
+  const HO = { id: '00000000-0000-4000-8000-0000000000h1', code: 'HO', name: 'Head Office', isHo: true };
+  const nameFor = (code: string) => `acc-${code}`;
+
+  it('buildTransferLines balances for branch→HO and cancels at consolidation', () => {
+    const lines = buildTransferLines({
+      settlementCode: '1010',
+      dueFromCode: '1400',
+      dueToCode: '1400',
+      kind: 'branch_to_ho',
+      amount: '5000',
+      nameFor,
+    });
+    const dr = lines.reduce((s, l) => s + Number(l.debit), 0);
+    const cr = lines.reduce((s, l) => s + Number(l.credit), 0);
+    expect(dr).toBeCloseTo(cr, 2);
+    expect(lines).toHaveLength(4);
+  });
+
+  it('buildTransferLines balances for ho→branch and inter-branch', () => {
+    for (const kind of ['ho_to_branch', 'inter_branch'] as const) {
+      const lines = buildTransferLines({ settlementCode: '1020', dueFromCode: '1400', dueToCode: '1400', kind, amount: '1200.50', nameFor });
+      const dr = lines.reduce((s, l) => s + Number(l.debit), 0);
+      const cr = lines.reduce((s, l) => s + Number(l.credit), 0);
+      expect(dr).toBeCloseTo(cr, 2);
+    }
+  });
+
+  it('blocks savings credited to expense debits', () => {
+    const r = checkVoucherPostingRules({
+      lines: [
+        { accountCode: '6100', debit: '500.00', credit: '0.00' },
+        { accountCode: '2100', debit: '0.00', credit: '500.00' },
+      ],
+      accountTypes: { '6100': 'expense', '2100': 'liability' },
+    });
+    expect(r.allowed).toBe(false);
+    expect(r.violation).toBe('savings_to_expense');
+    expect(r.messageBn).toContain('সঞ্চয়');
+  });
+
+  it('blocks savings credited to fixed-asset debits', () => {
+    const r = checkVoucherPostingRules({
+      lines: [
+        { accountCode: '1500', debit: '8000.00', credit: '0.00' },
+        { accountCode: '2100', debit: '0.00', credit: '8000.00' },
+      ],
+      accountTypes: { '1500': 'asset', '2100': 'liability' },
+    });
+    expect(r.allowed).toBe(false);
+    expect(r.violation).toBe('savings_to_fixed_asset');
+  });
+
+  it('allows normal deposit settlement (savings credited, cash debited)', () => {
+    const r = checkVoucherPostingRules({
+      lines: [
+        { accountCode: '1010', debit: '500.00', credit: '0.00' },
+        { accountCode: '2100', debit: '0.00', credit: '500.00' },
+      ],
+      accountTypes: { '1010': 'asset', '2100': 'liability' },
+    });
+    expect(r.allowed).toBe(true);
+  });
+
+  it('blocks mixed misuse where savings exceed permitted debits', () => {
+    const r = checkVoucherPostingRules({
+      lines: [
+        { accountCode: '1010', debit: '300.00', credit: '0.00' },
+        { accountCode: '6110', debit: '400.00', credit: '0.00' },
+        { accountCode: '2100', debit: '0.00', credit: '500.00' },
+        { accountCode: '6120', debit: '0.00', credit: '200.00' },
+      ],
+      accountTypes: { '1010': 'asset', '6110': 'expense', '2100': 'liability', '6120': 'expense' },
+    });
+    expect(r.allowed).toBe(false);
+  });
+
+  const mkVoucher = (date: string, lines: Array<{ accountCode: string; debit: string; credit: string }>, fundId: string | null = null): Voucher => ({
+    id: `v-${date}-${lines[0]!.accountCode}`,
+    voucherNumber: `JV-T-${date}`,
+    branchId: 'b1',
+    branchName: 'Dhaka',
+    voucherType: 'journal',
+    voucherDate: date,
+    fundId,
+    fundName: null,
+    projectName: null,
+    payeePayer: null,
+    memo: 'test',
+    status: 'approved',
+    lines: lines.map((l) => ({ ...l, accountName: l.accountCode, fundId, projectName: null, partyName: null, note: null })),
+    attachments: [],
+    autoSource: null,
+    preparedBy: null,
+    checkedBy: null,
+    checkedAt: null,
+    approvedBy: null,
+    approvedAt: null,
+    createdAt: `${date}T10:00:00Z`,
+  });
+
+  it('buildLedger keeps a running balance on the account nature', () => {
+    const { rows, closing } = buildLedger(
+      [
+        { date: '2026-09-01', voucherNumber: 'JV-1', memo: 'a', debit: '500.00', credit: '0.00' },
+        { date: '2026-09-05', voucherNumber: 'JV-2', memo: 'b', debit: '0.00', credit: '200.00' },
+      ],
+      true,
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows[1]!.balance).toBe('300.00');
+    expect(closing).toBe('300.00');
+  });
+
+  it('buildReceiptsPayments computes opening/closing cash and skips pre-period', () => {
+    const vouchers = [
+      mkVoucher('2026-08-20', [
+        { accountCode: '1010', debit: '1000.00', credit: '0.00' },
+        { accountCode: '2100', debit: '0.00', credit: '1000.00' },
+      ]),
+      mkVoucher('2026-09-10', [
+        { accountCode: '1010', debit: '500.00', credit: '0.00' },
+        { accountCode: '4200', debit: '0.00', credit: '500.00' },
+      ]),
+      mkVoucher('2026-09-15', [
+        { accountCode: '6130', debit: '200.00', credit: '0.00' },
+        { accountCode: '1010', debit: '0.00', credit: '200.00' },
+      ]),
+    ];
+    const rpt = buildReceiptsPayments({
+      periodStart: '2026-09-01',
+      periodEnd: '2026-09-30',
+      vouchers,
+      accountCategory: (c) => (c === '1010' ? 'cash' : c === '1020' ? 'bank' : 'control'),
+    });
+    expect(rpt.openingCash).toBe('1000.00');
+    expect(rpt.totalIn).toBe('500.00');
+    expect(rpt.totalOut).toBe('200.00');
+    expect(rpt.closingCash).toBe('1300.00');
+  });
+
+  it('buildIncomeExpenditure nets income and expense for the surplus', () => {
+    const vouchers = [
+      mkVoucher('2026-09-10', [
+        { accountCode: '1010', debit: '700.00', credit: '0.00' },
+        { accountCode: '4100', debit: '0.00', credit: '700.00' },
+      ]),
+      mkVoucher('2026-09-11', [
+        { accountCode: '6100', debit: '300.00', credit: '0.00' },
+        { accountCode: '1010', debit: '0.00', credit: '300.00' },
+      ]),
+    ];
+    const rpt = buildIncomeExpenditure({
+      periodStart: '2026-09-01',
+      periodEnd: '2026-09-30',
+      vouchers,
+      accountType: (c) => (c === '4100' ? 'income' : c.startsWith('6') ? 'expense' : 'asset'),
+      accountName: (c) => ({ name: `EN ${c}`, nameBn: `BN ${c}` }),
+    });
+    expect(rpt.totalIncome).toBe('700.00');
+    expect(rpt.totalExpenditure).toBe('300.00');
+    expect(rpt.surplus).toBe('400.00');
+  });
+
+  it('buildBalanceSheet balances with retained surplus folded into funds', () => {
+    const vouchers = [
+      mkVoucher('2026-01-05', [
+        { accountCode: '1010', debit: '5000.00', credit: '0.00' },
+        { accountCode: '3200', debit: '0.00', credit: '5000.00' },
+      ]),
+      mkVoucher('2026-02-05', [
+        { accountCode: '1200', debit: '4000.00', credit: '0.00' },
+        { accountCode: '1010', debit: '0.00', credit: '4000.00' },
+      ]),
+      mkVoucher('2026-03-05', [
+        { accountCode: '1010', debit: '600.00', credit: '0.00' },
+        { accountCode: '4100', debit: '0.00', credit: '600.00' },
+      ]),
+    ];
+    const accounts = [
+      { code: '1010', name: 'Cash', nameBn: 'নগদ', type: 'asset' as const },
+      { code: '1200', name: 'Loans', nameBn: 'ঋণ', type: 'asset' as const },
+      { code: '3200', name: 'General Fund', nameBn: 'সাধারণ তহবিল', type: 'fund' as const },
+    ];
+    const rpt = buildBalanceSheet({
+      asOf: '2026-12-31',
+      vouchers,
+      accounts,
+      accountType: (c) => (c === '1010' || c === '1200' ? 'asset' : c === '3200' ? 'fund' : c === '4100' ? 'income' : 'expense'),
+    });
+    expect(rpt.totalAssets).toBe('5600.00');
+    expect(rpt.totalFunds).toBe('5600.00');
+    expect(rpt.retainedSurplus).toBe('600.00');
+    expect(rpt.balanced).toBe(true);
+  });
+
+  it('buildFundStatement only includes lines tagged to the fund', () => {
+    const fundV = mkVoucher(
+      '2026-09-05',
+      [
+        { accountCode: '1010', debit: '900.00', credit: '0.00' },
+        { accountCode: '3200', debit: '0.00', credit: '900.00' },
+      ],
+      'fund-1',
+    );
+    const plain = mkVoucher('2026-09-06', [
+      { accountCode: '1010', debit: '50.00', credit: '0.00' },
+      { accountCode: '6130', debit: '0.00', credit: '50.00' },
+    ]);
+    const rpt = buildFundStatement({ fundId: 'fund-1', fundName: 'Education Fund', periodStart: '2026-09-01', periodEnd: '2026-09-30', vouchers: [fundV, plain] });
+    expect(rpt.lines).toHaveLength(2);
+    expect(rpt.totalDebit).toBe('900.00');
+    expect(rpt.totalCredit).toBe('900.00');
+    expect(rpt.closingBalance).toBe('0.00'); // the tagged lines offset: Dr 900 / Cr 900
+  });
+
+  it('buildBudgetVsActual computes variance per account', () => {
+    const vouchers = [
+      mkVoucher('2026-09-10', [
+        { accountCode: '6100', debit: '1200.00', credit: '0.00' },
+        { accountCode: '1010', debit: '0.00', credit: '1200.00' },
+      ]),
+    ];
+    const rpt = buildBudgetVsActual({
+      periodStart: '2026-09-01',
+      periodEnd: '2026-09-30',
+      budgets: [
+        { accountCode: '6100', amount: '1000.00' },
+        { accountCode: '6110', amount: '500.00' },
+      ],
+      vouchers,
+      accountName: (c) => ({ name: `EN ${c}`, nameBn: `BN ${c}` }),
+      accountType: (c) => (c.startsWith('6') ? 'expense' : 'asset'),
+    });
+    expect(rpt.lines[0]!.actual).toBe('1200.00');
+    expect(rpt.lines[0]!.variance).toBe('-200.00');
+    expect(rpt.lines[1]!.actual).toBe('0.00');
+    expect(rpt.lines[1]!.variance).toBe('500.00');
+    expect(rpt.totalBudgeted).toBe('1500.00');
+    expect(rpt.totalActual).toBe('1200.00');
+  });
+
+  it('periodHasVouchers detects approved activity inside the window', () => {
+    const vs = [
+      mkVoucher('2026-09-15', [{ accountCode: '1010', debit: '1.00', credit: '0.00' }, { accountCode: '2100', debit: '0.00', credit: '1.00' }]),
+      mkVoucher('2026-10-01', [{ accountCode: '1010', debit: '1.00', credit: '0.00' }, { accountCode: '2100', debit: '0.00', credit: '1.00' }]),
+    ];
+    expect(periodHasVouchers(vs, '2026-09-01', '2026-09-30')).toBe(true);
+    expect(periodHasVouchers(vs, '2026-10-01', '2026-10-31')).toBe(true);
+    expect(periodHasVouchers(vs, '2026-11-01', '2026-11-30')).toBe(false);
+  });
+
+  it('only Director-Finance-level roles reopen periods', () => {
+    expect(canReopenPeriod('super_admin')).toBe(true);
+    expect(canReopenPeriod('org_admin')).toBe(true);
+    expect(canReopenPeriod('branch_manager')).toBe(false);
+    expect(canReopenPeriod('account_officer')).toBe(false);
+  });
+
+  it('amountInWords renders bilingual footers', () => {
+    expect(amountInWordsBn('1500')).toBe('এক হাজার পাঁচ শত টাকা');
+    expect(amountInWordsBn('1250000')).toContain('লক্ষ');
+    expect(amountInWordsEn(1500)).toBe('One Thousand Five Hundred Taka');
+    expect(amountInWords('1500')).toBe('এক হাজার পাঁচ শত টাকা / One Thousand Five Hundred Taka');
+    expect(VOUCHER_TYPE_LABELS.cash_receipt.bn).toBe('নগদ প্রাপ্তি ভাউচার');
+    expect(VOUCHER_PRINT_LABELS.en.voucherNo).toBe('Voucher No');
+  });
+});
+
+
+// ── HR module ───────────────────────────────────────────────────────────────
+describe('HR — staff master', () => {
+  it('flags field staff by designation', () => {
+    expect(isFieldStaff({ designation: 'field_officer' })).toBe(true);
+    expect(isFieldStaff({ designation: 'senior_field_officer' })).toBe(true);
+    expect(isFieldStaff({ designation: 'branch_manager' })).toBe(false);
+  });
+
+  it('computes the 12-month probation end', () => {
+    expect(probationEndDateFor('2026-01-15')).toBe('2027-01-14');
+    expect(probationEndDateFor('2026-02-28')).toBe('2027-02-27');
+    expect(probationEndDateFor('bad')).toBeNull();
+  });
+
+  it('surfaces probation due/overdue for the worklist', () => {
+    const staff = { status: 'probation' as const, probationEndDate: '2026-09-20' };
+    expect(probationDue(staff, '2026-09-20')).toBe('due');
+    expect(probationDue(staff, '2026-09-25')).toBe('overdue');
+    expect(probationDue(staff, '2026-09-01')).toBeNull();
+    expect(probationDue({ status: 'confirmed' as const, probationEndDate: '2026-09-20' }, '2026-09-25')).toBeNull();
+  });
+});
+
+describe('HR — recruitment', () => {
+  it('averages interview scores', () => {
+    expect(applicantFinalScore({ interviewScores: [] })).toBeNull();
+    expect(
+      applicantFinalScore({
+        interviewScores: [
+          { panelist: 'A', score: 7, note: null },
+          { panelist: 'B', score: 8, note: null },
+          { panelist: 'C', score: 9, note: null },
+        ],
+      }),
+    ).toBe(8);
+  });
+
+  it('renders bilingual offer letters with key fields', () => {
+    const letter = renderOfferLetter({
+      orgName: 'Dhaka Samity',
+      candidateName: 'Rahima Begum',
+      designationBn: 'ফিল্ড অফিসার',
+      designationEn: 'Field Officer',
+      branchName: 'Dhaka Branch',
+      joiningDate: '2026-10-01',
+      monthlyGross: '18500.00',
+      probationMonths: 12,
+      issuedOn: '2026-09-23',
+    });
+    expect(letter).toContain('নিয়োগ পত্র');
+    expect(letter).toContain('Rahima Begum');
+    expect(letter).toContain('18500.00');
+    expect(letter).toContain('Offer of Employment');
+  });
+});
+
+describe('HR — attendance & leave', () => {
+  it('derives present/late from the 09:10 shift cut-off', () => {
+    const early = deriveAttendanceStatus({ mode: 'office', checkInAt: '2026-09-23T08:55:00Z' });
+    expect(early.status).toBe('present');
+    expect(early.distanceMeters).toBeNull();
+
+    const late = deriveAttendanceStatus({ mode: 'office', checkInAt: '2026-09-23T09:35:00Z' });
+    expect(late.status).toBe('late');
+  });
+
+  it('measures field distance and flags out-of-range check-ins', () => {
+    const near = deriveAttendanceStatus({
+      mode: 'field',
+      checkInAt: '2026-09-23T03:00:00Z',
+      branchPoint: { lat: 23.8103, lng: 90.4125 },
+      checkInPoint: { lat: 23.8113, lng: 90.4130 },
+    });
+    expect(near.status).toBe('present');
+    expect(near.outOfRange).toBe(false);
+    expect(near.distanceMeters).toBeLessThan(300);
+
+    const far = deriveAttendanceStatus({
+      mode: 'field',
+      checkInAt: '2026-09-23T03:00:00Z',
+      branchPoint: { lat: 23.8103, lng: 90.4125 },
+      checkInPoint: { lat: 23.9103, lng: 90.5125 },
+    });
+    expect(far.outOfRange).toBe(true);
+  });
+
+  it('counts inclusive leave days and balances', () => {
+    expect(daysBetweenInclusive('2026-09-01', '2026-09-01')).toBe(1);
+    expect(daysBetweenInclusive('2026-09-01', '2026-09-05')).toBe(5);
+    const bal = leaveBalance('casual', 4);
+    expect(bal).toEqual({ entitlement: 10, taken: 4, remaining: 6 });
+  });
+
+  it('grants leave only within balance after holiday adjustment', () => {
+    expect(canGrantLeave({ leaveType: 'casual', days: 5, approvedDaysTaken: 4, holidaysBetween: 0 })).toBe(true);
+    expect(canGrantLeave({ leaveType: 'casual', days: 7, approvedDaysTaken: 4, holidaysBetween: 0 })).toBe(false);
+    expect(canGrantLeave({ leaveType: 'casual', days: 7, approvedDaysTaken: 4, holidaysBetween: 2 })).toBe(true);
+  });
+});
+
+describe('HR — transfer & promotion orders', () => {
+  const base = {
+    kind: 'transfer' as const,
+    staffName: 'Kamal Hossain',
+    fromBranchName: 'Dhaka Branch',
+    toBranchName: 'Mymensingh Sadar',
+    fromDesignation: 'field_officer' as const,
+    toDesignation: 'senior_field_officer' as const,
+    fromDesignationBn: 'ফিল্ড অফিসার',
+    toDesignationBn: 'সিনিয়র ফিল্ড অফিসার',
+    effectiveDate: '2026-10-01',
+    orderNumber: 'TRF-2026-0007',
+    orgName: 'Dhaka Samity',
+  };
+  it('renders a bilingual transfer order', () => {
+    const order = renderMovementOrder(base);
+    expect(order).toContain('কর্মস্থল পরিবর্তন');
+    expect(order).toContain('TRF-2026-0007');
+    expect(order).toContain('Mymensingh Sadar');
+    expect(order).toContain('ORDER: Transfer');
+  });
+  it('renders a bilingual promotion order', () => {
+    const order = renderMovementOrder({ ...base, kind: 'promotion', orderNumber: 'PRM-2026-0004' });
+    expect(order).toContain('পদোন্নতি');
+    expect(order).toContain('ORDER: Promotion');
   });
 });

@@ -24,7 +24,11 @@
     "workingAreas": "Working areas",
     "map": "Map",
     "users": "Users",
+    "hr": "Human Resources",
     "organization": "Organization",
+    "delinquency": "Delinquency",
+    "recovery": "Recovery & Early Warning",
+    "accounting": "Accounting",
     "reports": "Reports"
   },
   "auth": {

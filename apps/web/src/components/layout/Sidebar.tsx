@@ -2,9 +2,11 @@ import { NavLink } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   BarChart3,
+  BookLock,
   Building2,
   ClipboardList,
   HandCoins,
+  HeartPulse,
   Landmark,
   LayoutDashboard,
   Map,
@@ -32,6 +34,8 @@ const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   Map,
   MapPinned,
   Wallet,
+  HeartPulse,
+  BookLock,
 }
 
 /** Sidebar rendered from the shared NAV tree, filtered by user permissions. */

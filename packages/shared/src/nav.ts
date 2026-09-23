@@ -59,10 +59,16 @@ export const NAV: readonly NavGroup[] = [
       { key: 'workingAreas', to: '/working-areas', icon: 'MapPinned', permission: 'branch:manage' },
       { key: 'map', to: '/map', icon: 'Map', permission: 'branch:manage' },
       { key: 'users', to: '/users', icon: 'UserCog', permission: 'user:manage' },
+      { key: 'hr', to: '/hr', icon: 'Users', permission: 'member:read' },
     ],
   },
   {
     key: 'insights',
-    items: [{ key: 'reports', to: '/reports', icon: 'BarChart3', permission: 'report:read' }],
+    items: [
+      { key: 'delinquency', to: '/delinquency', icon: 'TrendingDown', permission: 'loan:read' },
+      { key: 'recovery', to: '/delinquency/recovery', icon: 'HeartPulse', permission: 'loan:read' },
+      { key: 'reports', to: '/reports', icon: 'BarChart3', permission: 'report:read' },
+      { key: 'accounting', to: '/accounting', icon: 'BookLock', permission: 'report:read' },
+    ],
   },
 ];

@@ -10,25 +10,45 @@ import {
   cashHandoverCreateSchema,
   cashHandoverSubmitSchema,
   collectionEntrySchema,
+  collectionReversalSchema,
+  collectionRulesPatchSchema,
   collectionSheetQuerySchema,
   collectionSyncSchema,
   handoverQuerySchema,
+  loanClosureQuoteSchema,
+  loanClosureCreateSchema,
+  loanRescheduleCreateSchema,
+  loanWriteOffCreateSchema,
+  rescheduleDecisionSchema,
+  writeOffDecisionSchema,
   type CollectionReceipt,
 } from '@samity/shared';
 import { isDemoMode } from '../lib/demo.js';
 import {
   buildDemoSheet,
+  closeDemoLoan,
   collectionDemoStore,
   CollectionDemoError,
   confirmDemoHandover,
   createDemoHandover,
+  decideDemoReschedule,
+  decideDemoWriteOff,
   demoCashSummary,
+  demoClosureQuote,
+  demoCollectionDashboard,
   DEMO_OFFICER_ID,
+  getDemoRules,
+  listDemoFraudFlags,
   listDemoHandovers,
   postDemoCollectionEntry,
+  requestDemoReschedule,
+  requestDemoWriteOff,
   resetCollectionDemoStore,
+  reviewDemoFraudFlag,
+  reverseDemoEntry,
   submitDemoHandover,
   syncDemoCollection,
+  updateDemoRules,
   type PostContext,
 } from '../lib/collection-store.js';
 import { loanDemoStore, LoanDemoError } from '../lib/loan-store.js';
@@ -39,10 +59,9 @@ import { AppError, Conflict, Forbidden, NotFound } from '../lib/errors.js';
 
 function demoError(err: unknown): never {
   if (err instanceof CollectionDemoError) {
-    if (err.status === 404) throw NotFound(err.message);
-    if (err.status === 409) throw Conflict(err.message);
-    if (err.status === 403) throw Forbidden(err.message);
-    throw new AppError(400, 'VALIDATION_ERROR', err.message);
+    // Store codes are all in the shared ErrorCode union — pass them through so
+    // clients can distinguish ALREADY_CLOSED, FUTURE_DATED, BACKDATED, …
+    throw new AppError(err.status, err.code, err.message);
   }
   if (err instanceof LoanDemoError) {
     if (err.status === 404) throw NotFound(err.message);
@@ -208,5 +227,219 @@ collectionDemoRouter.post(
     } catch (err) {
       demoError(err);
     }
+  }),
+);
+
+// ── 5) Early closure: quote then close ──────────────────────────────────────
+collectionDemoRouter.get(
+  '/settlement/closure-quote',
+  requirePermission('loan:read'),
+  asyncHandler(async (req, res) => {
+    const q = loanClosureQuoteSchema.parse({ applicationId: req.query['applicationId'] });
+    res.json(demoClosureQuote(loanDemoStore(), q.applicationId));
+  }),
+);
+
+collectionDemoRouter.post(
+  '/settlement/closure',
+  requirePermission('loan:write'),
+  validate(loanClosureCreateSchema),
+  asyncHandler(async (req: RequestWithAuth, res) => {
+    try {
+      const body = req.body as { applicationId: string; serviceDeductionPercent?: number };
+      const closure = closeDemoLoan(
+        { store: loanDemoStore(), closedBy: req.auth?.userId ?? null },
+        collectionDemoStore(),
+        body.applicationId,
+        body.serviceDeductionPercent,
+      );
+      res.status(201).json(closure);
+    } catch (err) {
+      demoError(err);
+    }
+  }),
+);
+
+// ── 5) Reschedule: request → decision ───────────────────────────────────────
+collectionDemoRouter.post(
+  '/settlement/reschedule',
+  requirePermission('loan:write'),
+  validate(loanRescheduleCreateSchema),
+  asyncHandler(async (req: RequestWithAuth, res) => {
+    try {
+      const r = requestDemoReschedule(
+        loanDemoStore(),
+        collectionDemoStore(),
+        req.body as { applicationId: string; shiftInstallments: number; reason: 'death_in_family'; note: string },
+        req.auth?.userId ?? null,
+      );
+      res.status(201).json(r);
+    } catch (err) {
+      demoError(err);
+    }
+  }),
+);
+
+collectionDemoRouter.get(
+  '/settlement/reschedules',
+  requirePermission('loan:read'),
+  asyncHandler(async (_req, res) => {
+    res.json({ items: collectionDemoStore().reschedules });
+  }),
+);
+
+collectionDemoRouter.post(
+  '/settlement/reschedules/:id/decision',
+  requirePermission('loan:write'),
+  validate(rescheduleDecisionSchema),
+  asyncHandler(async (req: RequestWithAuth, res) => {
+    try {
+      const body = req.body as { decision: 'approved' | 'rejected' };
+      const r = decideDemoReschedule(
+        loanDemoStore(),
+        collectionDemoStore(),
+        req.params['id'] as string,
+        body.decision,
+        req.auth?.userId ?? null,
+      );
+      res.json(r);
+    } catch (err) {
+      demoError(err);
+    }
+  }),
+);
+
+// ── 5) Write-off: request → decision (approval needed) ──────────────────────
+collectionDemoRouter.post(
+  '/settlement/write-offs',
+  requirePermission('loan:write'),
+  validate(loanWriteOffCreateSchema),
+  asyncHandler(async (req: RequestWithAuth, res) => {
+    try {
+      const w = requestDemoWriteOff(
+        loanDemoStore(),
+        collectionDemoStore(),
+        req.body as { applicationId: string; reason: 'other'; note: string },
+        req.auth?.userId ?? null,
+      );
+      res.status(201).json(w);
+    } catch (err) {
+      demoError(err);
+    }
+  }),
+);
+
+collectionDemoRouter.get(
+  '/settlement/write-offs',
+  requirePermission('loan:read'),
+  asyncHandler(async (_req, res) => {
+    res.json({ items: collectionDemoStore().writeOffs });
+  }),
+);
+
+collectionDemoRouter.post(
+  '/settlement/write-offs/:id/decision',
+  requirePermission('loan:write'),
+  validate(writeOffDecisionSchema),
+  asyncHandler(async (req: RequestWithAuth, res) => {
+    try {
+      const body = req.body as { decision: 'recommended' | 'approved' | 'rejected'; decisionNote?: string };
+      const w = decideDemoWriteOff(
+        loanDemoStore(),
+        collectionDemoStore(),
+        req.params['id'] as string,
+        body.decision,
+        req.auth?.userId ?? null,
+        body.decisionNote ?? null,
+      );
+      res.json(w);
+    } catch (err) {
+      demoError(err);
+    }
+  }),
+);
+
+// ── 6) BM-only reversal of a wrong entry ────────────────────────────────────
+collectionDemoRouter.post(
+  '/entries/:id/reverse',
+  requirePermission('loan:write'),
+  validate(collectionReversalSchema.omit({ entryId: true })),
+  asyncHandler(async (req: RequestWithAuth, res) => {
+    if (req.auth?.role !== 'branch_manager' && req.auth?.role !== 'super_admin' && req.auth?.role !== 'org_admin') {
+      throw Forbidden('Only a Branch Manager can reverse a wrong entry');
+    }
+    try {
+      const body = req.body as { reason: string };
+      const rev = reverseDemoEntry(
+        loanDemoStore(),
+        collectionDemoStore(),
+        req.params['id'] as string,
+        body.reason,
+        req.auth?.userId ?? null,
+      );
+      res.status(201).json(rev);
+    } catch (err) {
+      demoError(err);
+    }
+  }),
+);
+
+// ── 8) Rule engine config (org-level) ───────────────────────────────────────
+collectionDemoRouter.get(
+  '/rules',
+  requirePermission('loan:read'),
+  asyncHandler(async (_req, res) => {
+    res.json(getDemoRules(collectionDemoStore()));
+  }),
+);
+
+collectionDemoRouter.patch(
+  '/rules',
+  requirePermission('loan:write'),
+  validate(collectionRulesPatchSchema),
+  asyncHandler(async (req, res) => {
+    res.json(updateDemoRules(collectionDemoStore(), req.body as { backdateLimitDays?: number; futureLimitDays?: number }));
+  }),
+);
+
+// ── 9) Fraud flags ──────────────────────────────────────────────────────────
+collectionDemoRouter.get(
+  '/fraud-flags',
+  requirePermission('loan:read'),
+  asyncHandler(async (req, res) => {
+    const reviewed = req.query['reviewed'];
+    res.json({
+      items: listDemoFraudFlags(
+        collectionDemoStore(),
+        reviewed === undefined ? undefined : reviewed === 'true',
+      ),
+    });
+  }),
+);
+
+collectionDemoRouter.post(
+  '/fraud-flags/:id/review',
+  requirePermission('loan:write'),
+  asyncHandler(async (req: RequestWithAuth, res) => {
+    try {
+      const flag = reviewDemoFraudFlag(collectionDemoStore(), req.params['id'] as string, req.auth?.userId ?? null);
+      res.json(flag);
+    } catch (err) {
+      demoError(err);
+    }
+  }),
+);
+
+// ── 7) BM realtime dashboard (expected vs collected) ────────────────────────
+collectionDemoRouter.get(
+  '/dashboard',
+  requirePermission('loan:read'),
+  asyncHandler(async (req: RequestWithAuth, res) => {
+    const store = loanDemoStore();
+    const coll = collectionDemoStore();
+    const meetingDate = (req.query['date'] as string) ?? new Date().toISOString().slice(0, 10);
+    const branchId =
+      (req.query['branchId'] as string) ?? store.applications[0]?.branchId ?? '00000000-0000-4000-8000-0000000000b1';
+    res.json(demoCollectionDashboard(store, coll, meetingDate, branchId));
   }),
 );

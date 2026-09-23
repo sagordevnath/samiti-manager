@@ -4,7 +4,7 @@ import { hasPermission, permissionsForRole, ROLES, type AuthUser, type Permissio
 import { env } from '../env.js';
 import { Forbidden, Unauthorized } from '../lib/errors.js';
 import { logger } from '../lib/logger.js';
-import { DEMO_TOKEN, demoAuthUser, isDemoMode } from '../lib/demo.js';
+import { DEMO_OFFICER_TOKEN, DEMO_TOKEN, demoAuthUser, demoOfficerAuthUser, isDemoMode } from '../lib/demo.js';
 
 export interface RequestWithAuth extends Request {
   auth?: AuthUser;
@@ -26,6 +26,12 @@ export function requireAuth(req: RequestWithAuth, _res: Response, next: NextFunc
   // Demo mode: accept the web app's seeded session as a super_admin identity.
   if (isDemoMode() && token === DEMO_TOKEN) {
     req.auth = demoAuthUser();
+    next();
+    return;
+  }
+  // Secondary demo session with the field-officer role.
+  if (isDemoMode() && token === DEMO_OFFICER_TOKEN) {
+    req.auth = demoOfficerAuthUser();
     next();
     return;
   }

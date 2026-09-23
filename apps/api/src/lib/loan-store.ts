@@ -589,6 +589,26 @@ export function decideDemoApplication(
 export function demoLoanSchedule(store: LoanDemoData, applicationId: string, startFrom?: Date): LoanSchedule {
   const app = store.applications.find((a) => a.id === applicationId);
   if (!app) throw new LoanDemoError(404, 'NOT_FOUND', 'Loan application not found');
+  // A disbursed loan replays its stored schedule (incl. paid amounts, shifts).
+  // Records without rows (seeded queue placeholders) still compute fresh.
+  const rec = store.disbursements.find((d) => d.applicationId === applicationId && !d.cancelledAt);
+  if (rec && rec.schedule.rows.length > 0) {
+    return {
+      method: rec.schedule.schedule.method,
+      installmentCount: rec.schedule.rows.length,
+      installmentAmount: rec.schedule.schedule.installmentAmount,
+      totalInterest: rec.schedule.schedule.totalInterest,
+      totalPayable: rec.schedule.schedule.totalPayable,
+      installments: rec.schedule.rows.map((r) => ({
+        seq: r.seq,
+        dueDate: r.dueDate,
+        principal: r.principal,
+        interest: r.interest,
+        total: r.total,
+        balanceAfter: r.balanceAfter,
+      })),
+    };
+  }
   const product = store.products.find((p) => p.id === app.productId)!;
   return computeLoanSchedule({
     principal: app.requestedAmount,
@@ -737,7 +757,7 @@ export function demoDisbursementFor(store: LoanDemoData, applicationId: string):
       applicationId,
       orgId: store.orgId,
       branchId: app.branchId,
-      samityId: null,
+      samityId: store.samityAssignments[applicationId] ?? null,
       applicationNumber: app.applicationNumber,
       memberId: app.memberId,
       memberName: demoMemberName(app.memberId),

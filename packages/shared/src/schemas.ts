@@ -52,7 +52,30 @@ export interface Paginated<T> {
 }
 
 /** ── API error contract ──────────────────────────────────────────────────── */
-export const ERROR_CODES = ['VALIDATION_ERROR', 'UNAUTHORIZED', 'FORBIDDEN', 'NOT_FOUND', 'CONFLICT', 'RATE_LIMITED', 'INTERNAL'] as const;
+export const ERROR_CODES = [
+  'VALIDATION_ERROR',
+  'UNAUTHORIZED',
+  'FORBIDDEN',
+  'NOT_FOUND',
+  'CONFLICT',
+  'RATE_LIMITED',
+  'INTERNAL',
+  // ── Collection & settlement domain codes ──
+  'BACKDATED',
+  'FUTURE_DATED',
+  'ALREADY_CLOSED',
+  'ALREADY_PAID',
+  'ALREADY_REQUESTED',
+  'ALREADY_RESCHEDULED',
+  'ALREADY_REVERSED',
+  'ALREADY_DECIDED',
+  'INVALID_STATUS',
+  // ── Accounting domain codes ──
+  'NOT_CHECKED',
+  'MAPPING_INACTIVE',
+  'DAY_LOCKED',
+  'PETTY_LIMIT',
+] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
 export interface ApiErrorBody {

@@ -49,6 +49,7 @@ export const LOAN_APPLICATION_STATUSES = [
   'rejected',
   'disbursed',
   'closed',
+  'written_off',
 ] as const;
 export type LoanApplicationStatus = (typeof LOAN_APPLICATION_STATUSES)[number];
 
@@ -243,6 +244,7 @@ export function nextLoanStage(current: LoanApplicationStatus, amountBdt: string,
     disbursed: 'closed',
     rejected: null,
     closed: null,
+    written_off: null,
   };
   return transitions[current];
 }

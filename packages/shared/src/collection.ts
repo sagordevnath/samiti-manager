@@ -11,6 +11,7 @@
 
 import { z } from 'zod';
 import { moneySchema, paginationQuerySchema, uuidSchema } from './schemas.js';
+import { collectionEntryMetaSchema } from './collection-settlement.js';
 
 // ── Allocation order (requirement 1) ────────────────────────────────────────
 export const ALLOCATION_ORDERS = [
@@ -84,6 +85,8 @@ export const collectionEntrySchema = z.object({
   note: z.string().trim().max(300).optional(),
   /** Offline-captured timestamp for the audit trail. */
   capturedAt: z.string().datetime().optional(),
+  /** Capture context (GPS) feeding the fraud engine (req 9). */
+  meta: collectionEntryMetaSchema.optional(),
 });
 export type CollectionEntryInput = z.infer<typeof collectionEntrySchema>;
 
