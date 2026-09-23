@@ -17,3 +17,4 @@ export * from './delinquency-recovery.js';
 export * from './accounting.js';
 export * from './accounting-ops.js';
 export * from './hr.js';
+export * from './hr-payroll.js';

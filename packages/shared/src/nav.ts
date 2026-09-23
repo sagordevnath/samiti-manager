@@ -60,6 +60,7 @@ export const NAV: readonly NavGroup[] = [
       { key: 'map', to: '/map', icon: 'Map', permission: 'branch:manage' },
       { key: 'users', to: '/users', icon: 'UserCog', permission: 'user:manage' },
       { key: 'hr', to: '/hr', icon: 'Users', permission: 'member:read' },
+      { key: 'selfService', to: '/self-service', icon: 'UserRound', permission: 'member:read' },
     ],
   },
   {

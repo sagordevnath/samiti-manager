@@ -7,13 +7,17 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarCheck, ClipboardList, Printer, UserCog, Users } from 'lucide-react';
+import { Banknote, CalendarCheck, ClipboardList, Gauge, Printer, ShieldAlert, UserCog, Users } from 'lucide-react';
 import type {
   Applicant,
   AttendanceEntry,
+  DisciplineCase,
   HrHoliday,
+  KpiScorecard,
   LeaveRequest,
+  PayrollRun,
   Staff,
+  StaffAppraisal,
   StaffMovement,
   Vacancy,
 } from '@samity/shared';
@@ -25,8 +29,17 @@ import { Label } from '@/components/ui/label';
 import { api } from '@/lib/api';
 import { useMoneyFormatter } from '@/lib/digits';
 
-const TABS = ['staff', 'recruitment', 'attendance', 'movements'] as const;
+const TABS = ['staff', 'recruitment', 'attendance', 'movements', 'payroll', 'performance'] as const;
 type Tab = (typeof TABS)[number];
+
+const TAB_LABELS: Record<Tab, string> = {
+  staff: 'কর্মচারী',
+  recruitment: 'নিয়োগ',
+  attendance: 'হাজিরা ও ছুটি',
+  movements: 'বদলি ও পদোন্নতি',
+  payroll: 'পেরোল ও পিএফ',
+  performance: 'পারফরম্যান্স ও শৃঙ্খলা',
+};
 
 const STATUS_BN: Record<string, string> = {
   probation: 'প্রবেশনারি',
@@ -179,6 +192,53 @@ export function HrPage() {
   });
   const applyMovement = useMutation({ mutationFn: (id: string) => api.post(`/hr/movements/${id}/apply`), onSuccess: invalidate });
 
+  // ── Payroll / performance queries (req 5–8) ──
+  const payrollRuns = useQuery({
+    queryKey: ['hr', 'payroll-runs'],
+    queryFn: () => api.get<{ items: PayrollRun[] }>('/hr/payroll/runs'),
+  });
+  const pfLedger = useQuery({
+    queryKey: ['hr', 'pf'],
+    queryFn: () => api.get<{ items: Array<{ id: string; staffId: string; type: string; employeeAmount: string; employerAmount: string; balanceAfter: string; period: string | null; note: string | null }> }>('/hr/pf'),
+  });
+  const kpis = useQuery({
+    queryKey: ['hr', 'kpi'],
+    queryFn: () => api.get<{ items: KpiScorecard[] }>('/hr/performance/kpi'),
+  });
+  const appraisals = useQuery({
+    queryKey: ['hr', 'appraisals'],
+    queryFn: () => api.get<{ items: StaffAppraisal[] }>('/hr/performance/appraisals'),
+  });
+  const discipline = useQuery({
+    queryKey: ['hr', 'discipline'],
+    queryFn: () => api.get<{ items: DisciplineCase[] }>('/hr/discipline'),
+  });
+
+  const createPayroll = useMutation({
+    mutationFn: () => api.post('/hr/payroll/runs', { period: TODAY().slice(0, 7) }),
+    onSuccess: invalidate,
+  });
+  const decidePayroll = useMutation({
+    mutationFn: ({ id, action }: { id: string; action: 'approve' | 'pay' }) => api.post(`/hr/payroll/runs/${id}/decision`, { action }),
+    onSuccess: invalidate,
+  });
+  const createKpi = useMutation({
+    mutationFn: () => api.put(`/hr/performance/kpi/${FIELD_OFFICER}/${TODAY().slice(0, 7)}`, { collection_rate: 1.0, par: 0.02, new_members: 9, meeting_attendance: 0.95 }),
+    onSuccess: invalidate,
+  });
+  const createAppraisal = useMutation({
+    mutationFn: () => api.post('/hr/performance/appraisals', { staffId: FIELD_OFFICER, year: TODAY().slice(0, 4), scores: { job_knowledge: 8, discipline: 9, teamwork: 7, client_service: 8, target_achievement: 8 }, comments: 'ডেমো মূল্যায়ন' }),
+    onSuccess: invalidate,
+  });
+  const createCase = useMutation({
+    mutationFn: () => api.post('/hr/discipline', { staffId: FIELD_OFFICER, severity: 'written_warning', incidentDate: TODAY(), description: 'ডেমো অভিযোগ: ধারাবাহিক সভা মিস' }),
+    onSuccess: invalidate,
+  });
+  const closeCase = useMutation({
+    mutationFn: ({ id, outcome }: { id: string; outcome: string }) => api.post(`/hr/discipline/${id}/close`, { explanation: 'ব্যাখ্যা গৃহীত', outcome }),
+    onSuccess: invalidate,
+  });
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -193,7 +253,7 @@ export function HrPage() {
             onClick={() => setTab(k)}
             className={`rounded-md px-3 py-1.5 text-sm font-medium ${tab === k ? 'bg-background shadow-sm' : 'text-muted-foreground'}`}
           >
-            {k === 'staff' ? 'কর্মচারী' : k === 'recruitment' ? 'নিয়োগ' : k === 'attendance' ? 'হাজিরা ও ছুটি' : 'বদলি ও পদোন্নতি'}
+            {TAB_LABELS[k]}
           </button>
         ))}
       </div>
@@ -578,6 +638,183 @@ export function HrPage() {
                 )}
               </CardContent>
             </Card>
+          )}
+
+          {/* ── Payroll & PF (req 5–6) ── */}
+          {tab === 'payroll' && (
+            <div className="space-y-4">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-base">
+                    <span>মাসিক পেরোল</span>
+                    <Button size="sm" variant="outline" disabled={busy} onClick={() => act(() => createPayroll.mutateAsync())}>
+                      {TODAY().slice(0, 7)} রান তৈরি করুন
+                    </Button>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="overflow-x-auto">
+                  {(payrollRuns.data?.items ?? []).map((run) => (
+                    <div key={run.id} className="mb-3 rounded-lg border p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <span className="font-semibold">{run.period}</span>{' '}
+                          <Pill label={run.status === 'draft' ? 'খসড়া' : run.status === 'approved' ? 'অনুমোদিত' : 'পরিশোধিত'} tone={run.status === 'draft' ? 'amber' : run.status === 'approved' ? 'green' : 'muted'} />
+                        </div>
+                        <div className="flex flex-wrap items-center gap-3 text-sm">
+                          <span>মোট: <b className="tabular-nums">{money(run.totalGross)}</b></span>
+                          <span>কর্তন: <b className="tabular-nums">{money(run.totalDeduction)}</b></span>
+                          <span>নিট: <b className="tabular-nums text-teal-700">{money(run.totalNet)}</b></span>
+                        </div>
+                        <div className="flex gap-2">
+                          {run.status === 'draft' && (
+                            <Button size="sm" disabled={busy} onClick={() => act(() => decidePayroll.mutateAsync({ id: run.id, action: 'approve' }))}>
+                              অনুমোদন
+                            </Button>
+                          )}
+                          {run.status === 'approved' && (
+                            <Button size="sm" disabled={busy} onClick={() => act(() => decidePayroll.mutateAsync({ id: run.id, action: 'pay' }))}>
+                              পরিশোধ
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                      <table className="mt-2 w-full text-xs">
+                        <thead className="border-b text-muted-foreground">
+                          <tr>
+                            <Th>কোড</Th><Th>নাম</Th><Th right>মোট</Th><Th right>পিএফ</Th><Th right>কর</Th><Th right>নিট</Th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {run.lines.map((l) => (
+                            <tr key={l.staffId} className="border-b last:border-0">
+                              <Td className="font-mono">{l.staffCode}</Td>
+                              <Td>{l.staffName}</Td>
+                              <Td right>{money(l.gross)}</Td>
+                              <Td right>{money(l.deductions.pf_employee ?? '0')}</Td>
+                              <Td right>{money(l.deductions.tax ?? '0')}</Td>
+                              <Td right className="font-semibold">{money(l.net)}</Td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ))}
+                  {(payrollRuns.data?.items ?? []).length === 0 && (
+                    <p className="py-3 text-sm text-muted-foreground">কোনো পেরোল রান নেই — উপরের বাটনে এই মাসের রান তৈরি করুন।</p>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-2 text-base"><Banknote className="h-4 w-4" /> প্রভিডেন্ট ফান্ড খতিয়ান</CardTitle>
+                </CardHeader>
+                <CardContent className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="border-b text-muted-foreground">
+                      <tr><Th>মাস</Th><Th>কর্মচারী</Th><Th>ধরন</Th><Th right>নিজস্ব</Th><Th right>প্রতিষ্ঠান</Th><Th right>ব্যালেন্স</Th></tr>
+                    </thead>
+                    <tbody>
+                      {(pfLedger.data?.items ?? []).map((e) => (
+                        <tr key={e.id} className="border-b last:border-0">
+                          <Td>{e.period ?? '—'}</Td>
+                          <Td>{(staff.data?.items ?? []).find((s) => s.id === e.staffId)?.nameBn ?? e.staffId.slice(-4)}</Td>
+                          <Td>{e.type === 'contribution' ? 'চাঁদা' : e.type === 'interest' ? 'সুদ' : e.type === 'withdrawal' ? 'উত্তোলন' : 'হস্তান্তর'}</Td>
+                          <Td right>{money(e.employeeAmount)}</Td>
+                          <Td right>{money(e.employerAmount)}</Td>
+                          <Td right className="font-semibold">{money(e.balanceAfter)}</Td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {(pfLedger.data?.items ?? []).length === 0 && (
+                    <p className="py-3 text-sm text-muted-foreground">পিএফ লেনদেন নেই — পেরোল পরিশোধ করলে চাঁদা স্বয়ংক্রিয়ভাবে জমা হবে।</p>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {/* ── Performance & discipline (req 7–8) ── */}
+          {tab === 'performance' && (
+            <div className="space-y-4">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-base">
+                    <span className="flex items-center gap-2"><Gauge className="h-4 w-4" /> মাসিক কেপিআই স্কোরকার্ড</span>
+                    <Button size="sm" variant="outline" disabled={busy} onClick={() => act(() => createKpi.mutateAsync())}>ডেমো কেপিআই</Button>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="border-b text-muted-foreground">
+                      <tr><Th>মাস</Th><Th>কর্মচারী</Th><Th right>আদায়</Th><Th right>পিএআর</Th><Th right>নতুন সদস্য</Th><Th right>উপস্থিতি</Th><Th right>স্কোর</Th><Th>গ্রেড</Th></tr>
+                    </thead>
+                    <tbody>
+                      {(kpis.data?.items ?? []).map((k) => (
+                        <tr key={k.id} className="border-b last:border-0">
+                          <Td>{k.period}</Td>
+                          <Td>{k.staffName}</Td>
+                          <Td right>{(k.actuals.collection_rate * 100).toFixed(1)}%</Td>
+                          <Td right>{(k.actuals.par * 100).toFixed(1)}%</Td>
+                          <Td right>{k.actuals.new_members}</Td>
+                          <Td right>{(k.actuals.meeting_attendance * 100).toFixed(0)}%</Td>
+                          <Td right className="font-semibold">{k.totalScore}</Td>
+                          <Td><Pill label={k.grade} tone={k.grade === 'A' ? 'green' : k.grade === 'B' ? 'amber' : 'red'} /></Td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {(kpis.data?.items ?? []).length === 0 && <p className="py-3 text-sm text-muted-foreground">কোনো কেপিআই নেই।</p>}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-base">
+                    <span>বার্ষিক মূল্যায়ন</span>
+                    <Button size="sm" variant="outline" disabled={busy} onClick={() => act(() => createAppraisal.mutateAsync())}>ডেমো মূল্যায়ন</Button>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="overflow-x-auto">
+                  {(appraisals.data?.items ?? []).map((a) => (
+                    <div key={a.id} className="flex flex-wrap items-center justify-between gap-2 border-b py-2 text-sm last:border-0">
+                      <span>{a.year} — {a.staffName}</span>
+                      <span className="tabular-nums">রেটিং <b>{a.rating}</b>/100</span>
+                      <Pill label={a.status === 'submitted' ? 'জমা দেওয়া' : a.status === 'reviewed' ? 'রিভিউ সম্পন্ন' : 'খসড়া'} tone={a.status === 'reviewed' ? 'green' : 'amber'} />
+                    </div>
+                  ))}
+                  {(appraisals.data?.items ?? []).length === 0 && <p className="py-3 text-sm text-muted-foreground">কোনো মূল্যায়ন নেই।</p>}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-base">
+                    <span className="flex items-center gap-2"><ShieldAlert className="h-4 w-4" /> শৃঙ্খলা মামলা (এইচআর ও পরিচালক)</span>
+                    <Button size="sm" variant="outline" disabled={busy} onClick={() => act(() => createCase.mutateAsync())}>ডেমো মামলা</Button>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="overflow-x-auto">
+                  {(discipline.data?.items ?? []).map((c) => (
+                    <div key={c.id} className="flex flex-wrap items-center justify-between gap-2 border-b py-2 text-sm last:border-0">
+                      <span>{c.staffName} — {c.incidentDate}</span>
+                      <Pill
+                        label={c.severity === 'written_warning' ? 'লিখিত সতর্কতা' : c.severity === 'verbal_warning' ? 'মৌখিক সতর্কতা' : c.severity === 'show_cause' ? 'কারণ দর্শানো' : c.severity === 'suspension' ? 'বরখাস্ত' : 'অপসারণ'}
+                        tone={c.severity === 'termination' ? 'red' : 'amber'}
+                      />
+                      <Pill label={c.status === 'open' ? 'চলমান' : 'বন্ধ'} tone={c.status === 'open' ? 'amber' : 'muted'} />
+                      {c.status === 'open' && (
+                        <Button size="sm" variant="outline" disabled={busy} onClick={() => act(() => closeCase.mutateAsync({ id: c.id, outcome: 'সতর্ক করা হলো' }))}>
+                          বন্ধ করুন
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                  {(discipline.data?.items ?? []).length === 0 && <p className="py-3 text-sm text-muted-foreground">কোনো শৃঙ্খলা মামলা নেই।</p>}
+                </CardContent>
+              </Card>
+            </div>
           )}
         </>
       )}

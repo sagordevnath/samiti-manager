@@ -40,6 +40,19 @@ import {
   renderOfferLetter,
 } from '../src/hr';
 import {
+  computePayrollLine,
+  monthlyTax,
+  festivalBonusFor,
+  payslipText,
+  bankSheet,
+  gratuityFor,
+  scoreKpi,
+  kpiGrade,
+  appraisalRating,
+  renderWarningLetterBn,
+  renderWarningLetterEn,
+} from '../src/hr-payroll';
+import {
   ASSET_CLASSES,
   DELINQUENCY_BUCKETS,
   assetClassForDpd,
@@ -1810,5 +1823,143 @@ describe('HR — transfer & promotion orders', () => {
     const order = renderMovementOrder({ ...base, kind: 'promotion', orderNumber: 'PRM-2026-0004' });
     expect(order).toContain('পদোন্নতি');
     expect(order).toContain('ORDER: Promotion');
+  });
+});
+
+describe('HR payroll: salary computation (req 5)', () => {
+  const structure = { basic: '12000.00', houseRent: '3000.00', medical: '1000.00', conveyance: '800.00', fieldAllowance: '1200.00', pfEmployeeRate: '0.05' };
+
+  it('computes gross, PF, progressive tax and net for full attendance', () => {
+    const line = computePayrollLine({ staffId: 's1', staffCode: 'EMP-1', staffName: 'A', branchId: null, structure, workingDays: 26, presentDays: 26 });
+    expect(line.gross).toBe('18000.00');
+    expect(line.deductions.pf_employee).toBe('600.00'); // 5% of basic
+    expect(line.deductions.tax).toBe('0.00'); // 17400 taxable is under the 25k exempt band
+    expect(line.net).toBe('17400.00');
+    expect(line.attendanceRatio).toBe('1.00');
+  });
+
+  it('prorates by attendance ratio for unpaid absence', () => {
+    const line = computePayrollLine({ staffId: 's1', staffCode: 'EMP-1', staffName: 'A', branchId: null, structure, workingDays: 26, presentDays: 13 });
+    expect(line.attendanceRatio).toBe('0.50');
+    expect(line.gross).toBe('9000.00');
+    expect(line.deductions.pf_employee).toBe('300.00');
+  });
+
+  it('counts paid leave as paid days', () => {
+    const line = computePayrollLine({ staffId: 's1', staffCode: 'EMP-1', staffName: 'A', branchId: null, structure, workingDays: 26, presentDays: 20, paidLeaveDays: 6 });
+    expect(line.attendanceRatio).toBe('1.00');
+  });
+
+  it('applies loan advance deduction', () => {
+    const line = computePayrollLine({ staffId: 's1', staffCode: 'EMP-1', staffName: 'A', branchId: null, structure, workingDays: 26, presentDays: 26, loanAdvance: 1000 });
+    expect(line.deductions.loan_advance).toBe('1000.00');
+    expect(line.net).toBe('16400.00');
+  });
+
+  it('monthlyTax is progressive across slabs', () => {
+    expect(monthlyTax(20000)).toBe(0);
+    expect(monthlyTax(30000)).toBe(250); // (30000-25000) × 5%
+    expect(monthlyTax(50000)).toBe(1750); // 15000×5% + 10000×10%
+  });
+});
+
+describe('HR payroll: festival bonus (req 5)', () => {
+  it('pays one basic for confirmed staff with 6+ months service', () => {
+    expect(festivalBonusFor({ status: 'confirmed', joiningDate: '2024-01-01', basic: '12000.00' }, '2026-03-20')).toBe(12000);
+  });
+
+  it('prorates for staff under 6 months and excludes probationers', () => {
+    // 3 months of service → half basic.
+    const prorated = festivalBonusFor({ status: 'confirmed', joiningDate: '2025-12-20', basic: '12000.00' }, '2026-03-20');
+    expect(prorated).toBeGreaterThan(0);
+    expect(prorated).toBeLessThan(12000);
+    expect(festivalBonusFor({ status: 'probation', joiningDate: '2020-01-01', basic: '12000.00' }, '2026-03-20')).toBe(0);
+  });
+});
+
+describe('HR payroll: payslip & bank sheet (req 5)', () => {
+  it('renders a Bangla payslip with all components', () => {
+    const line = computePayrollLine({ staffId: 's1', staffCode: 'EMP-1', staffName: 'কমল', branchId: null, structure: { basic: '12000.00', houseRent: '3000.00', medical: '1000.00', conveyance: '800.00', fieldAllowance: '1200.00', pfEmployeeRate: '0.05' }, workingDays: 26, presentDays: 26 });
+    const text = payslipText(line, '2026-09', 'সমিতি ম্যানেজার');
+    expect(text).toContain('বেতন স্লিপ');
+    expect(text).toContain('মূল বেতন: 12000.00');
+    expect(text).toContain('নিট বেতন');
+  });
+
+  it('maps bank sheet rows and flags missing accounts', () => {
+    const lines = [
+      { id: '1', payrollId: 'p', staffId: 's1', staffCode: 'EMP-1', staffName: 'A', branchId: null, components: {} as never, gross: '10.00', deductions: {}, totalDeduction: '0.00', net: '10.00', workingDays: 26, presentDays: 26, attendanceRatio: '1.00' },
+      { id: '2', payrollId: 'p', staffId: 's2', staffCode: 'EMP-2', staffName: 'B', branchId: null, components: {} as never, gross: '10.00', deductions: {}, totalDeduction: '0.00', net: '20.00', workingDays: 26, presentDays: 26, attendanceRatio: '1.00' },
+    ];
+    const rows = bankSheet(lines, new Map([['s1', { bankName: 'DBBL', bankMasked: '····1234' }]]));
+    expect(rows[0]).toMatchObject({ accountMasked: '····1234', net: '10.00' });
+    expect(rows[1].accountMasked).toBeNull();
+  });
+});
+
+describe('HR gratuity (req 6)', () => {
+  it('pays 15 days basic per completed year', () => {
+    // 4 completed years → 4 × half basic monthly.
+    expect(gratuityFor('2022-01-01', '2026-01-01', '12000.00')).toBe(24000);
+  });
+
+  it('pays nothing under one year', () => {
+    expect(gratuityFor('2025-06-01', '2026-03-01', '12000.00')).toBe(0);
+  });
+});
+
+describe('HR KPI scorecard (req 7)', () => {
+  it('scores collection and attendance proportionally', () => {
+    expect(scoreKpi('collection_rate', 0.98, 0.98)).toBe(100);
+    expect(scoreKpi('meeting_attendance', 0.9, 0.9)).toBe(100);
+    expect(scoreKpi('collection_rate', 0.49, 0.98)).toBe(50);
+  });
+
+  it('scores PAR inversely (lower is better)', () => {
+    expect(scoreKpi('par', 0, 0.05)).toBe(100);
+    expect(scoreKpi('par', 0.05, 0.05)).toBe(0);
+    expect(scoreKpi('par', 0.025, 0.05)).toBe(50);
+  });
+
+  it('grades the mean', () => {
+    const actuals = { collection_rate: 0.98, par: 0.02, new_members: 10, meeting_attendance: 0.95 };
+    const scores = {
+      collection_rate: scoreKpi('collection_rate', actuals.collection_rate, 0.98),
+      par: scoreKpi('par', actuals.par, 0.05),
+      new_members: scoreKpi('new_members', actuals.new_members, 8),
+      meeting_attendance: scoreKpi('meeting_attendance', actuals.meeting_attendance, 0.9),
+    };
+    const total = (Object.values(scores).reduce((a, b) => a + b, 0)) / 4;
+    expect(kpiGrade(total)).toBe('A');
+  });
+});
+
+describe('HR appraisal (req 7)', () => {
+  it('rates 1–10 criteria as 0–100', () => {
+    expect(appraisalRating({ job_knowledge: 8, discipline: 9, teamwork: 7, client_service: 8, target_achievement: 8 })).toBe(80);
+    expect(appraisalRating({ job_knowledge: 10, discipline: 10, teamwork: 10, client_service: 10, target_achievement: 10 })).toBe(100);
+  });
+});
+
+describe('HR disciplinary letters (req 8)', () => {
+  const base = {
+    id: 'c1', orgId: 'o', staffId: 's', staffName: 'কমল হোসেন', severity: 'written_warning' as const,
+    incidentDate: '2026-09-01', description: 'সভায় অনুপস্থিত', status: 'open' as const,
+    explanation: null, outcome: null, raisedBy: 'hr', closedBy: null, closedAt: null, createdAt: '2026-09-01T00:00:00Z',
+  };
+
+  it('renders Bangla and English warning letters', () => {
+    const bn = renderWarningLetterBn(base, 'সমিতি ম্যানেজার');
+    expect(bn).toContain('সতর্কতা পত্র');
+    expect(bn).toContain('লিখিত সতর্কতা');
+    expect(bn).toContain('৭ দিনের মধ্যে');
+    const en = renderWarningLetterEn(base, 'Samity Manager');
+    expect(en).toContain('WARNING LETTER');
+    expect(en).toContain('within 7 days');
+  });
+
+  it('includes the outcome once closed', () => {
+    const bn = renderWarningLetterBn({ ...base, status: 'closed', outcome: 'সতর্ক করা হলো' }, 'x');
+    expect(bn).toContain('সিদ্ধান্ত: সতর্ক করা হলো');
   });
 });

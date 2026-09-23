@@ -399,3 +399,125 @@ export interface HrMovementRow {
   created_at: string;
   updated_at: string;
 }
+
+/* ── 0034: HR payroll, PF, performance, discipline ── */
+
+export interface SalaryStructureRow {
+  id: string;
+  org_id: string;
+  grade: string;
+  basic: string;
+  house_rent: string;
+  medical: string;
+  conveyance: string;
+  field_allowance: string;
+  pf_employee_rate: string;
+  pf_employer_rate: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export interface PayrollRunRow {
+  id: string;
+  org_id: string;
+  period: string;
+  status: 'draft' | 'approved' | 'paid';
+  total_gross: string;
+  total_deduction: string;
+  total_net: string;
+  bonus_total: string;
+  prepared_by: string;
+  approved_by: string | null;
+  approved_at: string | null;
+  paid_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PayrollLineRow {
+  id: string;
+  org_id: string;
+  payroll_id: string;
+  staff_id: string;
+  components: Record<string, string>;
+  deductions: Record<string, string>;
+  gross: string;
+  total_deduction: string;
+  net: string;
+  bonus: string;
+  working_days: number;
+  present_days: number;
+  attendance_ratio: string;
+  created_at: string;
+}
+
+export interface PfLedgerRow {
+  id: string;
+  org_id: string;
+  staff_id: string;
+  period: string | null;
+  type: 'contribution' | 'interest' | 'withdrawal' | 'transfer_out';
+  employee_amount: string;
+  employer_amount: string;
+  balance_after: string;
+  note: string | null;
+  created_at: string;
+}
+
+export interface GratuitySettlementRow {
+  id: string;
+  org_id: string;
+  staff_id: string;
+  joining_date: string;
+  leaving_date: string;
+  last_basic: string;
+  years: number;
+  amount: string;
+  paid_at: string | null;
+  created_at: string;
+}
+
+export interface KpiScorecardRow {
+  id: string;
+  org_id: string;
+  staff_id: string;
+  period: string;
+  actuals: Record<string, number>;
+  scores: Record<string, number>;
+  total_score: string;
+  grade: 'A' | 'B' | 'C' | 'D';
+  created_at: string;
+}
+
+export interface StaffAppraisalRow {
+  id: string;
+  org_id: string;
+  staff_id: string;
+  year: string;
+  scores: Record<string, number>;
+  comments: string;
+  rating: string;
+  status: 'draft' | 'submitted' | 'reviewed';
+  reviewer_id: string | null;
+  reviewer_note: string | null;
+  created_at: string;
+}
+
+export interface DisciplinaryCaseRow {
+  id: string;
+  org_id: string;
+  staff_id: string;
+  severity: 'verbal_warning' | 'written_warning' | 'show_cause' | 'suspension' | 'termination';
+  incident_date: string;
+  description: string;
+  status: 'open' | 'explained' | 'closed';
+  explanation: string | null;
+  outcome: string | null;
+  raised_by: string;
+  closed_by: string | null;
+  closed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}

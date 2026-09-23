@@ -25,6 +25,7 @@ import { ReceiptPage } from '@/pages/ReceiptPage';
 import { AccountingPage } from '@/pages/AccountingPage';
 import { AccountingVoucherPrintPage } from '@/pages/AccountingVoucherPrintPage';
 import { HrPage } from '@/pages/HrPage';
+import { SelfServicePage } from '@/pages/SelfServicePage';
 import { DelinquencyPage } from '@/pages/DelinquencyPage';
 import { RecoveryPage } from '@/pages/RecoveryPage';
 import { VoucherPage } from '@/pages/VoucherPage';
@@ -59,6 +60,7 @@ export default function App() {
         <Route path="/accounting" element={<AccountingPage />} />
         <Route path="/accounting/vouchers/:voucherId/print" element={<AccountingVoucherPrintPage />} />
         <Route path="/hr" element={<HrPage />} />
+        <Route path="/self-service" element={<SelfServicePage />} />
         <Route path="/loans/disbursements/:applicationId/voucher" element={<VoucherPage />} />
         <Route path="/loans/disbursements/:applicationId/agreement" element={<AgreementPage />} />
         <Route path="/loans/:id" element={<LoanDetailPage />} />

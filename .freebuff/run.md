@@ -211,3 +211,35 @@ curl -s -X POST -H "Authorization: Bearer demo-token" -H "Content-Type: applicat
   -d '{"staffId":"00000000-0000-4000-8000-0000000000f2","leaveType":"casual","startDate":"2026-10-05","endDate":"2026-10-07","reason":"Family visit"}' \
   http://localhost:4000/api/v1/hr/leave
 ```
+
+## 11. HR payroll, PF, performance & discipline (module 0034–0035, req 5–9)
+
+Salary structures (per grade), monthly payroll run (draft → approved → paid,
+attendance-prorated, festival/Eid bonus rule, progressive tax + PF +
+loan-advance deductions), payslips (`GET /hr/payroll/runs/:id/payslip/:staffId`),
+bank sheet with masked accounts, PF ledger (contributions auto-posted on
+payment; withdrawals can never overdraw), gratuity settlement (15 days' basic
+per completed year), monthly KPI scorecards (collection/PAR/new-members/
+attendance → A–D grade), yearly appraisals (1–10 × 5 criteria → 0–100),
+disciplinary cases with bilingual warning letters (HR/Director roles only),
+and `/self-service` page (own payslips, leave balance, PF, documents).
+RLS 0035: payroll_lines/pf/staff_appraisals readable by owner or staff roles;
+disciplinary_cases restricted to super_admin/org_admin.
+
+```bash
+# payroll run for the current month
+curl -s -X POST -H "Authorization: Bearer demo-token" -H "Content-Type: application/json" \
+  -d "{\"period\":\"$(date -u +%Y-%m)\"}" http://localhost:4000/api/v1/hr/payroll/runs
+# approve -> pay (posts PF contributions)
+curl -s -X POST -H "Authorization: Bearer demo-token" -H "Content-Type: application/json" \
+  -d '{"action":"pay"}' http://localhost:4000/api/v1/hr/payroll/runs/<id>/decision
+# PF ledger, KPI, self-service
+curl -s -H "Authorization: Bearer demo-token" http://localhost:4000/api/v1/hr/pf
+curl -s -X PUT -H "Authorization: Bearer demo-token" -H "Content-Type: application/json" \
+  -d '{"collection_rate":1.0,"par":0.02,"new_members":9,"meeting_attendance":0.95}' \
+  http://localhost:4000/api/v1/hr/performance/kpi/00000000-0000-4000-8000-0000000000f1/2026-09
+curl -s -H "Authorization: Bearer demo-token" http://localhost:4000/api/v1/hr/self-service
+```
+
+UI: `/hr` gains পেরোল ও পিএফ and পারফরম্যান্স ও শৃঙ্খলা tabs;
+`/self-service` is the staff self-service page (sidebar স্ব-সেবা).
