@@ -1,0 +1,13 @@
+{
+  "kind": "receipt",
+  "register": "cholito",
+  "vars": {
+    "memberName": "রহিমা বেগম",
+    "memberCode": "M-0001",
+    "branchName": "ধানমন্ডি শাখা",
+    "samityName": "গাজীপুর সমিতি",
+    "paidAmount": "12500.50",
+    "paidFor": "সঞ্চয় জমা",
+    "balance": "500"
+  }
+}

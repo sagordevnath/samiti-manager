@@ -1,0 +1,46 @@
+name: Nightly backup
+
+# Module 17 req 6 — scheduled pg_dump on GitHub's free runner. The connection
+# string lives in repository secrets (SUPABASE_DB) and never appears in logs.
+
+on:
+  schedule:
+    - cron: '0 18 * * *' # 18:00 UTC = midnight Asia/Dhaka
+  workflow_dispatch: {} # manual run for restore tests
+
+concurrency:
+  group: backup
+  cancel-in-progress: false
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: lwthiker/pg_dump-full
+          ref: master
+          path: pg_dump-full
+        continue-on-error: true # falls back to the runner's pg_dump if unavailable
+
+      - name: Install pg_dump client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+
+      - name: Dump database
+        env:
+          SUPABASE_DB: ${{ secrets.SUPABASE_DB }}
+          BACKUP_DIR: backups
+          RETAIN_DAYS: '30'
+        run: bash scripts/backup.sh
+
+      - name: Upload artifact (retained 30 days)
+        uses: actions/upload-artifact@v4
+        with:
+          name: samity-db-backup
+          path: backups/*.dump.gz
+          retention-days: 30

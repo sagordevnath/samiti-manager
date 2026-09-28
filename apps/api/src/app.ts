@@ -9,6 +9,7 @@ import { errorHandler } from './middleware/error.js';
 import { authRouter } from './routes/auth.routes.js';
 import { healthRouter } from './routes/health.routes.js';
 import { membersRouter } from './routes/members.routes.js';
+import { membersDemoRouter } from './routes/members.demo.routes.js';
 import { navRouter } from './routes/nav.routes.js';
 import { orgRouter } from './routes/org.routes.js';
 import { samityRouter } from './routes/samity.routes.js';
@@ -19,6 +20,17 @@ import { loansRouter } from './routes/loans.routes.js';
 import { loansDemoRouter } from './routes/loans.demo.routes.js';
 import { accountingDemoRouter } from './routes/accounting.demo.routes.js';
 import { hrDemoRouter } from './routes/hr.demo.routes.js';
+import { workDemoRouter } from './routes/work.demo.routes.js';
+import { insWelfareRouter } from './routes/insurance-welfare.routes.js';
+import { coopGovRouter } from './routes/coop-governance.routes.js';
+import { programsRouter } from './routes/programs.routes.js';
+import { misRouter } from './routes/mis.routes.js';
+import { misOpsRouter } from './routes/mis-ops.routes.js';
+import { commRouter } from './routes/comm.routes.js';
+import { commBulkRouter, documentsRouter, publicVerifyRouter } from './routes/documents.routes.js';
+import { securityRouter } from './routes/security.routes.js';
+import { privacyRouter } from './routes/privacy.routes.js';
+import { auditMutationTrail, csrfGuard, sessionTimeoutMiddleware } from './middleware/security.js';
 import { collectionDemoRouter } from './routes/collection.demo.routes.js';
 import { delinquencyRouter } from './routes/delinquency.routes.js';
 import { delinquencyRecoveryRouter } from './routes/delinquency-recovery.routes.js';
@@ -55,11 +67,33 @@ export function createApp() {
     }),
   );
 
+  // ── Security module hardening (req 3) ───────────────────────────────────
+  // CSRF: browser-originated mutations must be same-origin + X-Requested-With.
+  app.use(csrfGuard(env.CORS_ORIGINS));
+  // Idle/absolute session timeout per bearer token (demo mode).
+  app.use(sessionTimeoutMiddleware);
+  // Append-only audit trail for sensitive mutations (demo-mode analog of the
+  // SQL trigger in migration 0056).
+  app.use(auditMutationTrail);
+  // Tight per-IP budget for the brute-forceable / sensitive endpoints.
+  const sensitiveLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: 10,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: { code: 'RATE_LIMITED', message: 'অনেক বেশি চেষ্টা / Too many attempts' } },
+  });
+  app.use('/api/v1/auth/login', sensitiveLimiter);
+  app.use('/api/v1/security/protected-fields/reveal', sensitiveLimiter);
+  app.use('/api/v1/security/totp/confirm', sensitiveLimiter);
+
   // ── Routes (versioned) ────────────────────────────────────────────────────
   app.get('/', (_req, res) => res.json({ name: 'samity-api', status: 'ok' }));
   app.use('/api/v1/health', healthRouter);
   app.use('/api/v1/auth', authRouter);
-  app.use('/api/v1/members', membersRouter);
+  // Member module: demo mode serves the in-memory admissions wizard; a
+  // configured project gets the Supabase-backed router.
+  app.use('/api/v1/members', isDemoMode() ? membersDemoRouter : membersRouter);
   app.use('/api/v1/samities', samityRouter);
   app.use('/api/v1/nav', navRouter);
   app.use('/api/v1/org', orgRouter);
@@ -73,6 +107,19 @@ export function createApp() {
   if (isDemoMode()) app.use('/api/v1/delinquency', delinquencyRecoveryRouter);
   if (isDemoMode()) app.use('/api/v1/accounting', accountingDemoRouter);
   if (isDemoMode()) app.use('/api/v1/hr', hrDemoRouter);
+  if (isDemoMode()) app.use('/api/v1/work', workDemoRouter);
+  if (isDemoMode()) app.use('/api/v1/insurance', insWelfareRouter);
+  if (isDemoMode()) app.use('/api/v1/coop', coopGovRouter);
+  if (isDemoMode()) app.use('/api/v1/programs', programsRouter);
+  if (isDemoMode()) app.use('/api/v1/mis', misRouter);
+  if (isDemoMode()) app.use('/api/v1/mis-ops', misOpsRouter);
+  if (isDemoMode()) app.use('/api/v1/comms', commRouter);
+  if (isDemoMode()) app.use('/api/v1/documents', documentsRouter);
+  if (isDemoMode()) app.use('/api/v1/security', securityRouter);
+  if (isDemoMode()) app.use('/api/v1/privacy', privacyRouter);
+  // Public verification (req 7) — mounted without auth intentionally.
+  app.use('/api/v1/public', publicVerifyRouter);
+  if (isDemoMode()) app.use('/api/v1/comms/bulk', commBulkRouter);
 
   // 404 for unknown API paths.
   app.use((_req, res) => {

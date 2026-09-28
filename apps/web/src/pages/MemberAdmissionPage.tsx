@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react';
-import { CheckCircle2, ChevronLeft, ChevronRight, ShieldCheck, UserRoundCheck } from 'lucide-react';
+import { AlertTriangle, Ban, CheckCircle2, ChevronLeft, ChevronRight, Loader2, ShieldCheck, UserRoundCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { api } from '@/lib/api';
+import type { AdmissionView, DuplicateCheckResult } from '@samity/shared';
 
 const STAGES = [
   { key: 'field_survey', title: 'Field survey', titleBn: 'মাঠ জরিপ', short: 'Survey' },
@@ -37,6 +39,53 @@ const initialForm = {
   nomineeSharePct: '100',
 };
 
+/** One live membership per person: NID/mobile hit blocks, name+village flags. */
+function duplicateBanner(duplicates: DuplicateCheckResult | null) {
+  if (!duplicates || duplicates.matches.length === 0) return null;
+  if (duplicates.blocked) {
+    const hit = duplicates.matches[0]!;
+    return (
+      <div className="flex items-start gap-2 rounded-md border border-rose-300 bg-rose-50 p-3 text-sm text-rose-800">
+        <Ban className="mt-0.5 h-4 w-4 shrink-0" />
+        <div>
+          <p className="font-semibold">দ্বৈত সদস্যপদ নিষিদ্ধ / Duplicate membership blocked</p>
+          <p className="mt-0.5 text-xs">
+            {hit.fullName} ({hit.memberNumber}, {hit.branchCode}) — এই প্রতিষ্ঠানে ইতিমধ্যে সদস্য / already a member of this institution.
+          </p>
+        </div>
+      </div>
+    );
+  }
+  if (duplicates.overlapRisk) {
+    const hit = duplicates.matches[0]!;
+    return (
+      <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+        <div>
+          <p className="font-semibold">ওভারল্যাপ ঝুঁকি / Overlap risk</p>
+          <p className="mt-0.5 text-xs">
+            {hit.fullName} ({hit.memberNumber}, {hit.branchCode}) — অন্য শাখায় একই পরিচয়ের সদস্য থাকতে পারে / possible same person at another branch.
+          </p>
+        </div>
+      </div>
+    );
+  }
+  return null;
+}
+
+async function checkDuplicates(form: typeof initialForm): Promise<DuplicateCheckResult | null> {
+  const params = new URLSearchParams();
+  if (form.idNumber) params.set('idNumber', form.idNumber);
+  if (form.mobile) params.set('mobile', form.mobile);
+  if (form.fullName) params.set('fullName', form.fullName);
+  if (params.size === 0) return null;
+  try {
+    return await api.get<DuplicateCheckResult>(`/members/duplicate-check?${params.toString()}`);
+  } catch {
+    return null; // API offline → local-only draft continues without screening
+  }
+}
+
 function stepIsComplete(stepIndex: number, form: typeof initialForm) {
   switch (stepIndex) {
     case 0:
@@ -62,6 +111,9 @@ export function MemberAdmissionPage() {
   const [currentStep, setCurrentStep] = useState(0);
   const [form, setForm] = useState(initialForm);
   const [submitted, setSubmitted] = useState(false);
+  const [duplicates, setDuplicates] = useState<DuplicateCheckResult | null>(null);
+  const [view, setView] = useState<AdmissionView | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const progress = useMemo(() => ((currentStep + 1) / STAGES.length) * 100, [currentStep]);
 
@@ -72,17 +124,57 @@ export function MemberAdmissionPage() {
   const currentStage = STAGES[currentStep]!;
   const canContinue = stepIsComplete(currentStep, form);
 
-  const handleNext = () => {
+  const handleNext = async () => {
+    // Screen for duplicates as soon as identity data is present (step 1 → 2).
+    if (currentStep === 1) {
+      const result = await checkDuplicates(form);
+      setDuplicates(result);
+    }
     if (currentStep < STAGES.length - 1) {
       setCurrentStep((prev) => prev + 1);
       return;
     }
-    setSubmitted(true);
+    // Final stage: submit the draft to the server (falls back to local demo
+    // state when the API is unreachable).
+    setSubmitting(true);
+    try {
+      const res = await api.post<{ admission: AdmissionView }>('/members/admissions', {
+        branchId: '00000000-0000-4000-8000-0000000000b1',
+        draft: {
+          fullName: form.fullName,
+          fullNameBn: form.fullNameBn,
+          fatherOrHusbandName: form.fatherOrHusbandName,
+          motherName: form.motherName,
+          idType: 'nid',
+          idNumber: form.idNumber,
+          dob: form.dob,
+          mobile: form.mobile,
+          address: form.address,
+          workingAreaId: '00000000-0000-4000-8000-0000000000a1',
+          samityName: 'Rupali Samity',
+          occupation: form.occupation,
+          monthlyHouseholdIncome: form.monthlyHouseholdIncome,
+          landOwnedDecimals: Number(form.landOwnedDecimals || 0),
+          familyMembers: Number(form.familyMembers || 1),
+          photoPath: form.photoPath || undefined,
+          signaturePath: form.signaturePath || undefined,
+          nominees: [{ name: form.nomineeName, relation: form.nomineeRelation, sharePct: Number(form.nomineeSharePct || 100) }],
+        },
+      });
+      setView(res.admission);
+    } catch {
+      setView(null);
+    } finally {
+      setSubmitting(false);
+      setSubmitted(true);
+    }
   };
 
   const handlePrevious = () => {
     if (currentStep > 0) setCurrentStep((prev) => prev - 1);
   };
+
+  const memberNo = view?.memberNumber ?? (form.fullName ? `${form.fullName.slice(0, 3).toUpperCase()}-2026-001` : 'SM-2026-001');
 
   return (
     <div className="space-y-6">
@@ -124,6 +216,8 @@ export function MemberAdmissionPage() {
               );
             })}
           </div>
+
+          {!submitted && (currentStep === 1 || currentStep === 2) && duplicateBanner(duplicates)}
 
           {!submitted ? (
             <form className="space-y-6" onSubmit={(event) => event.preventDefault()}>
@@ -241,7 +335,7 @@ export function MemberAdmissionPage() {
                 <div className="space-y-4 rounded-lg border border-teal-200 bg-teal-50 p-4">
                   <p className="text-sm font-medium text-teal-800">Member ID assignment</p>
                   <div className="flex gap-3">
-                    <Input value={form.fullName ? `${form.fullName.slice(0, 3).toUpperCase()}-2026-001` : 'SM-2026-001'} readOnly />
+                    <Input value={memberNo} readOnly />
                   </div>
                 </div>
               )}
@@ -252,11 +346,11 @@ export function MemberAdmissionPage() {
                   <div className="grid gap-3 md:grid-cols-2">
                     <div className="rounded-md bg-white p-3 shadow-sm">
                       <p className="text-xs uppercase text-muted-foreground">Member number</p>
-                      <p className="mt-1 text-lg font-bold text-emerald-700">{form.fullName ? `${form.fullName.slice(0, 3).toUpperCase()}-2026-001` : 'SM-2026-001'}</p>
+                      <p className="mt-1 text-lg font-bold text-emerald-700">{memberNo}</p>
                     </div>
                     <div className="rounded-md bg-white p-3 shadow-sm">
                       <p className="text-xs uppercase text-muted-foreground">Passbook no.</p>
-                      <p className="mt-1 text-lg font-bold text-emerald-700">PB-2026-001</p>
+                      <p className="mt-1 text-lg font-bold text-emerald-700">{view?.passbookNo ?? 'PB-2026-001'}</p>
                     </div>
                   </div>
                 </div>
@@ -267,6 +361,7 @@ export function MemberAdmissionPage() {
                   <ChevronLeft className="h-4 w-4" /> Back
                 </Button>
                 <Button type="button" onClick={handleNext} disabled={currentStep < STAGES.length - 1 && !canContinue}>
+                  {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
                   {currentStep === STAGES.length - 1 ? 'Finish' : 'Next'}
                   {currentStep < STAGES.length - 1 && <ChevronRight className="h-4 w-4" />}
                 </Button>

@@ -1,0 +1,17 @@
+process.env.NODE_ENV = 'test';
+process.env.SUPABASE_URL = 'https://test.supabase.co';
+process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-key';
+process.env.SUPABASE_JWT_SECRET = 'test-jwt-secret';
+const m = await import('./src/lib/loan-store.js');
+const store = m.loanDemoStore();
+console.log('disbursements:', store.disbursements.length);
+console.log('statuses:', [...new Set(store.disbursements.map((d) => d.status))]);
+console.log('app statuses:', [...new Set(store.applications.map((a) => a.status))]);
+const del = await import('./src/lib/delinquency-store.js');
+const res = del.runNightlyClassification(store);
+console.log('classified:', res ? res.length : 'n/a');
+console.log('listClassified:', del.listClassifiedLoans(del.delinquencyDemoStore()).length);
+const mis = await import('./src/lib/mis-store.js');
+mis.resetMisStore();
+const snap = mis.buildSnapshot('2026-09-25');
+console.log('snapshot loans:', snap.loans.length, 'staff:', snap.staff.length, 'savings:', snap.savings.totalBalance, 'disbYtd:', snap.loanStats.disbursedYtd);

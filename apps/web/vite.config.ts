@@ -37,6 +37,8 @@ export default defineConfig({
     port: 5173,
     // Dev convenience: same-origin /api/v1 → local API, so no CORS setup is
     // needed while developing. Production uses the real gateway origin.
-    proxy: process.env.NODE_ENV !== 'production' ? { '/api/v1': 'http://localhost:4000' } : undefined,
+    // VITE_API_PROXY overrides the target (e.g. when 4000 is taken by another
+    // project's dev server on a shared machine).
+    proxy: process.env.NODE_ENV !== 'production' ? { '/api/v1': process.env['VITE_API_PROXY'] ?? 'http://localhost:4000' } : undefined,
   },
 });

@@ -1,0 +1,17 @@
+{
+  "projectId": "af332a64-d10f-4cae-805c-81070e656b33",
+  "visitDate": "2026-09-20",
+  "officerId": "off-1",
+  "officerName": "রফিক ইসলাম",
+  "village": "গাজীপুর",
+  "beneficiariesMet": 18,
+  "checklist": [
+    { "item": "সভা নিয়মিত হচ্ছে", "passed": true, "note": "" },
+    { "item": "টিউবওয়েল স্থাপিত", "passed": true, "note": "" },
+    { "item": "ঝুঁকিপূর্ণ পরিবার শনাক্ত", "passed": false, "note": "অনুসরণ প্রয়োজন" },
+    { "item": "নথি হালনাগাদ", "passed": true, "note": "" }
+  ],
+  "photos": [{ "id": "ph-1", "labelBn": "টিউবওয়েলের ছবি", "path": "photos/wash-1.jpg" }],
+  "findings": "টিউবওয়েল স্থাপন সম্পন্ন, প্রশিক্ষণ চলমান",
+  "followUps": [{ "action": "ঝুঁকি তালিকা হালনাগাদ", "owner": "ম্যানেজার", "dueDate": "2026-10-05", "done": false }]
+}

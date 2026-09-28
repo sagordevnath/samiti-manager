@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CalendarClock, MapPin, Smartphone, Users } from 'lucide-react';
+import { CalendarClock, MapPin, RefreshCcw, Smartphone, Users } from 'lucide-react';
+import { leaderRotationReminder } from '@samity/shared';
 
 interface MeetingSummary {
   id: string;
@@ -37,6 +38,14 @@ export function SamityMobilePage() {
 
   const nextMeeting = useMemo(() => meetings[0] ?? null, [meetings]);
 
+  // Module 04 req 7: leaders must rotate annually — surface a Bangla reminder
+  // when the last rotation is over 11 months old (demo dates until the
+  // samity_leaders table is wired into this screen).
+  const rotationReminder = useMemo(() => {
+    const lastRotation = '2025-09-01';
+    return leaderRotationReminder('2026-09-28', lastRotation);
+  }, []);
+
   return (
     <div className="mx-auto max-w-md space-y-4 pb-8">
       <div className="rounded-2xl border bg-card p-4 shadow-sm">
@@ -61,6 +70,16 @@ export function SamityMobilePage() {
           <div className="flex items-center gap-2"><Users className="h-4 w-4" /> {nextMeeting?.present}/{nextMeeting?.total} present</div>
         </div>
       </div>
+
+      {rotationReminder && (
+        <div className="flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 shadow-sm">
+          <RefreshCcw className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <p className="font-medium">নেতৃত্ব পরিবর্তনের সময় হয়েছে</p>
+            <p className="mt-0.5 text-xs">{rotationReminder}</p>
+          </div>
+        </div>
+      )}
 
       <div className="rounded-2xl border bg-card p-4 shadow-sm">
         <div className="mb-3 flex items-center justify-between">

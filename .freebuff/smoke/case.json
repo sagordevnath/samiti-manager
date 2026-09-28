@@ -1,0 +1,10 @@
+{
+  "type": "child_protection",
+  "severity": "critical",
+  "beneficiaryId": null,
+  "beneficiaryName": "সংবেদনশীল শিশু (গোপন)",
+  "restrictedDetails": "গোপনীয় বিবরণ — শুধু কেস ওয়ার্কার পড়বেন",
+  "consentGiven": true,
+  "assignedWorkerId": "worker-1",
+  "assignedWorkerName": "কেস ওয়ার্কার"
+}

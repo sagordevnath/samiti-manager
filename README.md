@@ -57,6 +57,8 @@ samity-manager/
 - Node.js ≥ 20
 - npm ≥ 10
 - A free-tier [Supabase](https://supabase.com) project
+- An [Infisical](https://app.infisical.com) account + the [Infisical CLI](https://infisical.com/docs/cli/overview)
+  (secrets are delivered centrally — there is no `.env` on disk)
 
 ## Setup
 
@@ -64,21 +66,33 @@ samity-manager/
 
 ```bash
 npm install
-cp .env.example .env
 ```
 
-### 2. Configure Supabase
+### 2. Configure secrets (Infisical)
+
+Secrets are stored in Infisical and injected at start-up, not kept in a `.env` file. Full runbook:
+[`docs/infisical.md`](docs/infisical.md). Short version:
+
+```bash
+npm run secrets:login   # infisical login (-i on WSL 2 / Codespaces / remote SSH)
+npm run secrets:init    # writes .infisical.json (project ID only — no secrets, safe to commit)
+npm run dev             # infisical run --env=dev -- ...
+```
+
+### 3. Configure Supabase
 
 1. Create a project at supabase.com (free tier).
-2. Copy **Project URL**, **anon key**, **service_role key** from Project Settings → API into `.env`.
+2. Copy **Project URL**, **anon key**, **service_role key** from Project Settings → API into the Infisical project (Development environment).
 3. Copy **JWT Secret** (Project Settings → API → JWT Settings) into `SUPABASE_JWT_SECRET`.
 4. Copy the **connection string** (Project Settings → Database → Connection string → URI) into `SUPABASE_DB` (needed only for migrate/seed).
 
-### 3. Database
+See [`docs/infisical.md`](docs/infisical.md) for the full list of keys the app reads.
+
+### 4. Database
 
 ```bash
 # apply migrations (creates tables + RLS)
-npm run db:migrate
+npm run secrets:run -- npm run db:migrate
 
 # seed demo org, branches, users, members
 npm run db:seed
@@ -92,16 +106,16 @@ Seed users (role is stored in `app_metadata` so the JWT carries it):
 | manager@samity.test   | Manager1234!  | branch_manager |
 | officer@samity.test   | Officer1234!  | account_officer|
 
-### 4. Run
+### 5. Run
 
 ```bash
-npm run dev          # api on :4000, web on :5173 (concurrently)
+npm run dev          # infisical run --env=dev -- ... ; api on :4000, web on :5173
 ```
 
 - Web: http://localhost:5173 (loads in Bangla)
 - API health: http://localhost:4000/api/v1/health
 
-### 5. Generate DB types (optional, after schema changes)
+### 6. Generate DB types (optional, after schema changes)
 
 ```bash
 npm run db:types
@@ -109,15 +123,17 @@ npm run db:types
 
 ## Scripts
 
-| Command            | Purpose                                  |
-| ------------------ | ---------------------------------------- |
-| `npm run dev`      | API + web dev servers together           |
-| `npm run build`    | Build all workspaces                     |
-| `npm run typecheck`| tsc across workspaces                    |
-| `npm run lint`     | ESLint across workspaces                 |
-| `npm run test`     | Vitest across workspaces                 |
-| `npm run format`   | Prettier write                           |
-| `npm run db:*`     | migrate / seed / generate types          |
+| Command             | Purpose                                                            |
+| ------------------- | ------------------------------------------------------------------ |
+| `npm run dev`       | API + web dev servers together, secrets from Infisical             |
+| `npm run dev:local` | Same, without Infisical (Zod defaults / demo mode)                 |
+| `npm run secrets:*` | `login`, `init`, `run`, `scan` helpers ([docs](docs/infisical.md)) |
+| `npm run build`     | Build all workspaces                                               |
+| `npm run typecheck` | tsc across workspaces                                              |
+| `npm run lint`      | ESLint across workspaces                                           |
+| `npm run test`      | Vitest across workspaces                                           |
+| `npm run format`    | Prettier write                                                     |
+| `npm run db:*`      | migrate / seed / generate types                                    |
 
 ## Conventions
 

@@ -30,7 +30,16 @@
     "delinquency": "Delinquency",
     "recovery": "Recovery & Early Warning",
     "accounting": "Accounting",
-    "reports": "Reports"
+    "reports": "Reports, MIS & Compliance",
+    "misops": "Report Operations",
+    "work": "Work & Targets",
+    "welfare": "Insurance & Welfare Funds",
+    "governance": "Dividend & Governance",
+    "programs": "Programs & Projects",
+    "programsOps": "Budget · Donors · Cases",
+    "communications": "Communication Center",
+    "documents": "Documents & Templates",
+    "security": "Security & Audit"
   },
   "auth": {
     "loginTitle": "Sign in",
@@ -63,7 +72,11 @@
     "language": "Language",
     "comingSoon": "This module is coming soon",
     "underConstruction": "This page is under construction. The route is ready for the module.",
-    "menu": "Menu"
+    "menu": "Menu",
+    "theme": "Theme",
+    "theme_light": "Light",
+    "theme_dark": "Dark",
+    "theme_system": "System"
   },
   "org": {
     "treeTitle": "Organization structure",

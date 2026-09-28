@@ -9,7 +9,7 @@ const envSchema = z.object({
   PORT: z.preprocess((v) => (v === '' || v == null ? undefined : v), z.coerce.number().int().positive().default(4000)),
   CORS_ORIGINS: z
     .string()
-    .default('http://localhost:5173')
+    .default('http://localhost:5173,http://localhost:5174')
     .transform((s) => s.split(',').map((o) => o.trim()).filter(Boolean)),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
 

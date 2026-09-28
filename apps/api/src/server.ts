@@ -1,5 +1,6 @@
 import { createApp } from './app.js';
 import { env } from './env.js';
+import { startBulkJobWorker } from './lib/doc-store.js';
 import { isDemoMode } from './lib/demo.js';
 import { logger } from './lib/logger.js';
 import { startSavingsInterestJob } from './lib/savings-interest-job.js';
@@ -11,6 +12,8 @@ const server = app.listen(env.PORT, () => {
   // The scheduled job posts against Supabase; skip it when running on the
   // in-memory demo store (no real project configured).
   if (env.NODE_ENV !== 'test' && !isDemoMode()) startSavingsInterestJob();
+  // Bulk-job queue worker (req 8): drains pending samity/branch jobs.
+  if (env.NODE_ENV !== 'test' && isDemoMode()) startBulkJobWorker();
 });
 
 /** Graceful shutdown for containers and CI. */

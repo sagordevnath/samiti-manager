@@ -172,7 +172,8 @@ export interface AdmissionView {
   stage: AdmissionStage;
   stageHistory: { stage: AdmissionStage; result: 'pass' | 'fail'; at: string; by: string; note?: string }[];
   draft: Partial<MemberDraft>;
-  duplicates: DuplicateMatch[];
+  /** Full duplicate-screening result (matches + blocked + overlapRisk). */
+  duplicates: DuplicateCheckResult;
   eligibility: { eligible: boolean; failures: string[] } | null;
   memberNumber: string | null;
   passbookNo: string | null;
@@ -249,9 +250,12 @@ export function evaluateEligibility(
 /** ── Duplicate detection ─────────────────────────────────────────────────── */
 export const duplicateCheckQuerySchema = z.object({
   idNumber: z.string().trim().regex(/^\d{6,17}$/).optional(),
-  mobile: z.string().trim().regex(/^01\d{9}$/).optional(),
+  // Optional +88 / 88 country-code prefix is accepted and normalized downstream.
+  mobile: z.string().trim().regex(/^(?:\+?88)?01\d{9}$/).optional(),
   fullName: z.string().trim().min(2).max(120).optional(),
   workingAreaId: uuidSchema.optional(),
+  /** The branch the applicant is applying at — drives block vs flag decisions. */
+  branchId: uuidSchema.optional(),
 });
 export type DuplicateCheckQuery = z.infer<typeof duplicateCheckQuerySchema>;
 
@@ -260,6 +264,8 @@ export interface DuplicateMatch {
   memberNumber: string;
   fullName: string;
   branchCode: string;
+  /** Branch of the existing member — drives block-vs-flag decisions. */
+  branchId?: string | null;
   status: MemberLifecycle;
   /** Why this matched: exact id, exact mobile, or fuzzy name+village. */
   matchedBy: ('id_number' | 'mobile' | 'name_village')[];
@@ -361,21 +367,26 @@ export function checkDuplicateMembership(
       memberNumber: member.memberNumber,
       fullName: member.fullName,
       branchCode: member.branchCode,
+      branchId: member.branchId ?? null,
       status: member.status,
       matchedBy,
       nameSimilarity: matchedBy.includes('name_village') ? nameSimilarity(query.fullName ?? null, member.fullName) : undefined,
     });
   }
 
-  const blocked = matches.length > 0 &&
-    matches.some((match) => {
-      const sameBranch = !!query.branchId && match.memberId && !match.memberId.startsWith('');
-      return sameBranch || match.matchedBy.includes('id_number') || match.matchedBy.includes('mobile');
-    });
+  const blocked = matches.some((match) => {
+    // Same branch: any match blocks (one membership per person per branch).
+    const sameBranch = !!query.branchId && !!match.branchId && match.branchId === query.branchId;
+    // Cross-branch: an exact identity hit (NID/birth-reg or mobile) blocks
+    // institution-wide; fuzzy name+village alone is only a flag.
+    return sameBranch || match.matchedBy.includes('id_number') || match.matchedBy.includes('mobile');
+  });
 
+  // Overlap risk: the applicant resembles an existing member at a different
+  // branch — always surfaced, even when not blocking.
   const overlapRisk = matches.some((match) => {
-    if (!query.branchId || !match.memberId) return false;
-    return match.matchedBy.length > 0 && match.matchedBy.some((reason) => reason === 'id_number' || reason === 'mobile' || reason === 'name_village');
+    const differentBranch = !!query.branchId && !!match.branchId && match.branchId !== query.branchId;
+    return differentBranch;
   });
 
   return { matches, blocked, overlapRisk };
@@ -555,7 +566,9 @@ export type MemberBulkRow = z.infer<typeof memberBulkRowSchema>;
 
 export const memberBulkImportSchema = z.object({
   branchCode: z.string().trim().min(2).max(12).optional(), // default branch when row lacks one
-  rows: z.array(memberBulkRowSchema).min(1).max(500),
+  // Per-row validation happens in bulkImportMembers so one malformed row
+  // produces an error-report entry instead of rejecting the whole batch.
+  rows: z.array(z.record(z.unknown())).min(1).max(500),
 });
 export type MemberBulkImportInput = z.infer<typeof memberBulkImportSchema>;
 

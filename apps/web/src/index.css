@@ -1,9 +1,18 @@
 @import 'tailwindcss';
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   Samity Manager — design system
+   Futuristic, glassmorphic, dark-capable. Built on Tailwind v4 @theme tokens
+   (oklch for perceptual uniformity) + CSS custom properties for the shadcn-
+   style component layer. One teal hue (182°) anchors the identity; accents
+   are tight so data stays the loudest thing on screen.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
 @theme {
   --font-sans: 'Noto Sans Bengali', 'Hind Siliguri', system-ui, sans-serif;
   --font-bengali: 'Noto Sans Bengali', sans-serif;
 
+  /* ── Core palette (light theme) ───────────────────────────────────────── */
   --color-primary: oklch(0.51 0.09 182);
   --color-primary-foreground: oklch(0.98 0.005 182);
   --color-secondary: oklch(0.95 0.02 182);
@@ -20,16 +29,90 @@
   --color-background: oklch(0.985 0.005 182);
   --color-foreground: oklch(0.2 0.02 182);
   --color-ring: oklch(0.51 0.09 182);
+
+  /* ── Futuristic accents ───────────────────────────────────────────────── */
+  --color-glow: oklch(0.62 0.14 182);
+  --color-aurora: oklch(0.55 0.1 262); /* indigo counterpoint */
+  --color-success: oklch(0.62 0.14 155);
+  --color-warning: oklch(0.72 0.14 80);
+
+  /* ── Elevation & depth ────────────────────────────────────────────────── */
+  --shadow-glow: 0 0 0 1px oklch(0.62 0.14 182 / 0.25), 0 4px 24px -4px oklch(0.51 0.09 182 / 0.35);
+  --shadow-card: 0 1px 2px oklch(0.2 0.02 182 / 0.06), 0 8px 24px -12px oklch(0.2 0.02 182 / 0.12);
+  --shadow-float: 0 4px 16px -4px oklch(0.2 0.02 182 / 0.18), 0 12px 40px -12px oklch(0.2 0.02 182 / 0.22);
 }
 
 /* ── shadcn-style CSS variables consumed by the component layer ─────────── */
 :root {
-  --background: 0 0% 100%;
+  --background: 183 30% 98%;
   --foreground: 220 14% 12%;
-  --border: 214 15% 88%;
-  --input: 214 15% 88%;
+  --border: 186 20% 87%;
+  --input: 186 20% 87%;
   --ring: 183 65% 32%;
-  --radius: 0.5rem;
+  --radius: 0.625rem;
+
+  /* Glass recipe (light): white at low opacity over the aurora backdrop. */
+  --glass-bg: oklch(1 0 0 / 0.72);
+  --glass-border: oklch(1 0 0 / 0.55);
+  --glass-blur: 14px;
+
+  /* Ambient page gradient — soft aurora behind the whole app. */
+  --page-gradient: radial-gradient(1200px 800px at 85% -10%, oklch(0.93 0.05 200 / 0.55), transparent 60%),
+    radial-gradient(1000px 700px at -10% 20%, oklch(0.95 0.04 165 / 0.5), transparent 55%),
+    linear-gradient(180deg, oklch(0.985 0.005 182), oklch(0.975 0.008 190));
+}
+
+/* ── Dark theme: deep ocean glass, same hue skeleton ─────────────────────── */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --background: 220 25% 8%;
+    --foreground: 183 20% 92%;
+    --border: 200 18% 20%;
+    --input: 200 18% 22%;
+    --ring: 183 70% 55%;
+
+    --color-background: oklch(0.17 0.02 230);
+    --color-foreground: oklch(0.93 0.01 182);
+    --color-card: oklch(0.21 0.025 228);
+    --color-card-foreground: oklch(0.93 0.01 182);
+    --color-border: oklch(0.32 0.02 220);
+    --color-muted: oklch(0.26 0.02 226);
+    --color-muted-foreground: oklch(0.68 0.02 200);
+    --color-primary: oklch(0.72 0.11 182);
+    --color-primary-foreground: oklch(0.18 0.03 210);
+    --color-ring: oklch(0.72 0.11 182);
+
+    --glass-bg: oklch(0.24 0.025 226 / 0.66);
+    --glass-border: oklch(0.55 0.03 200 / 0.28);
+    --page-gradient: radial-gradient(1200px 800px at 85% -10%, oklch(0.32 0.07 230 / 0.5), transparent 60%),
+      radial-gradient(1000px 700px at -10% 20%, oklch(0.3 0.06 182 / 0.42), transparent 55%),
+      linear-gradient(180deg, oklch(0.18 0.02 228), oklch(0.16 0.025 232));
+  }
+}
+
+/* Explicit theme switch hook (Topbar toggle sets data-theme on <html>). */
+:root[data-theme='dark'] {
+  /* Same values as the media-query dark block; kept in sync manually. */
+  --background: 220 25% 8%;
+  --foreground: 183 20% 92%;
+  --border: 200 18% 20%;
+  --input: 200 18% 22%;
+  --ring: 183 70% 55%;
+  --color-background: oklch(0.17 0.02 230);
+  --color-foreground: oklch(0.93 0.01 182);
+  --color-card: oklch(0.21 0.025 228);
+  --color-card-foreground: oklch(0.93 0.01 182);
+  --color-border: oklch(0.32 0.02 220);
+  --color-muted: oklch(0.26 0.02 226);
+  --color-muted-foreground: oklch(0.68 0.02 200);
+  --color-primary: oklch(0.72 0.11 182);
+  --color-primary-foreground: oklch(0.18 0.03 210);
+  --color-ring: oklch(0.72 0.11 182);
+  --glass-bg: oklch(0.24 0.025 226 / 0.66);
+  --glass-border: oklch(0.55 0.03 200 / 0.28);
+  --page-gradient: radial-gradient(1200px 800px at 85% -10%, oklch(0.32 0.07 230 / 0.5), transparent 60%),
+    radial-gradient(1000px 700px at -10% 20%, oklch(0.3 0.06 182 / 0.42), transparent 55%),
+    linear-gradient(180deg, oklch(0.18 0.02 228), oklch(0.16 0.025 232));
 }
 
 @layer base {
@@ -38,14 +121,182 @@
   }
   html {
     font-family: var(--font-sans);
+    /* Fluid type scale: 15px on small phones → 16.5px on desktop. */
+    font-size: clamp(0.9375rem, 0.9rem + 0.2vw, 1.0313rem);
+    -webkit-text-size-adjust: 100%;
   }
   body {
     @apply bg-background text-foreground antialiased;
     font-family: var(--font-sans);
+    background-image: var(--page-gradient);
+    background-attachment: fixed;
+    min-height: 100dvh;
+    /* Safe areas for notched phones (PWA standalone). */
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+  ::selection {
+    background: oklch(0.62 0.14 182 / 0.3);
   }
 }
 
 /* Bengali text needs generous line height. */
 :where([lang='bn'], .bn-text) {
   line-height: 1.7;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Utility layer — glass, glow, aurora, scrollbars, motion safety
+   ═══════════════════════════════════════════════════════════════════════════ */
+@layer utilities {
+  /* Frosted surface: use on topbar, sidebar, cards, dialogs. */
+  .glass {
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
+    border-color: var(--glass-border);
+  }
+
+  /* Hairline top highlight that sells the glass illusion. */
+  .glass-edge {
+    position: relative;
+  }
+  .glass-edge::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, oklch(1 0 0 / 0.65), transparent);
+    pointer-events: none;
+  }
+
+  .shadow-glow {
+    box-shadow: var(--shadow-glow);
+  }
+  .shadow-card {
+    box-shadow: var(--shadow-card);
+  }
+  .shadow-float {
+    box-shadow: var(--shadow-float);
+  }
+
+  /* Gradient text for page titles / KPI numbers. */
+  .text-aurora {
+    background: linear-gradient(120deg, oklch(0.51 0.09 182), oklch(0.55 0.1 262));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* Animated aurora border for hero cards (GPU-cheap, transform-only). */
+  .aurora-ring {
+    position: relative;
+  }
+  .aurora-ring::after {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    padding: 1px;
+    background: conic-gradient(
+      from var(--aurora-angle, 0deg),
+      oklch(0.62 0.14 182 / 0.7),
+      oklch(0.55 0.1 262 / 0.55),
+      oklch(0.72 0.14 80 / 0.45),
+      oklch(0.62 0.14 182 / 0.7)
+    );
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    animation: aurora-spin 8s linear infinite;
+    pointer-events: none;
+  }
+
+  /* Slim, theme-aware scrollbars. */
+  .scroll-slim {
+    scrollbar-width: thin;
+    scrollbar-color: oklch(0.6 0.02 200 / 0.4) transparent;
+  }
+  .scroll-slim::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scroll-slim::-webkit-scrollbar-thumb {
+    background: oklch(0.6 0.02 200 / 0.4);
+    border-radius: 9999px;
+  }
+  .scroll-slim::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  /* Touch targets ≥44px on coarse pointers (field phones). */
+  @media (pointer: coarse) {
+    .touch-safe {
+      min-height: 44px;
+      min-width: 44px;
+    }
+  }
+
+  /* Safe-area helpers for the bottom nav / floating bars. */
+  .pb-safe {
+    padding-bottom: max(env(safe-area-inset-bottom), 0.5rem);
+  }
+  .mb-safe {
+    margin-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+@keyframes aurora-spin {
+  to {
+    --aurora-angle: 360deg;
+  }
+}
+
+@property --aurora-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+/* Page transition: subtle rise + fade. */
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.page-enter {
+  animation: page-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* ── Accessibility: reduced motion kills every decorative animation ─────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .aurora-ring::after {
+    animation: none;
+  }
+}
+
+/* ── Print: strip glass/gradients, keep ink cost low ─────────────────────── */
+@media print {
+  body {
+    background: #fff !important;
+  }
+  .glass,
+  .aurora-ring::after {
+    background: none !important;
+    backdrop-filter: none !important;
+    box-shadow: none !important;
+  }
 }

@@ -1,0 +1,11 @@
+{
+  "sourceName": "PKSF বাংলাদেশ ব্যাংক লাইন",
+  "kind": "pksf",
+  "principal": "1200000",
+  "interestRatePct": "6",
+  "tenureMonths": 24,
+  "disbursementDate": "2026-01-15",
+  "repaymentStart": "2026-04-01",
+  "purposeProjectId": null,
+  "lenderContact": "pksf@example.com"
+}

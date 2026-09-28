@@ -42,6 +42,6 @@ describe('Sidebar permissions', () => {
     );
 
     expect(screen.getByText('ব্যবহারকারী')).toBeInTheDocument();
-    expect(screen.getByText('রিপোর্ট')).toBeInTheDocument();
+    expect(screen.getByText('রিপোর্ট, এমআইএস ও কমপ্লায়েন্স')).toBeInTheDocument();
   });
 });

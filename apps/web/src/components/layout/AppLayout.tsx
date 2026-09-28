@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react';
-import { Outlet } from 'react-router-dom';
-import { Menu, X } from 'lucide-react';
+import { Outlet, useLocation } from 'react-router-dom';
+import { X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { BottomNav } from './BottomNav';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 import { useUiStore } from '@/stores/ui';
 import { cn } from '@/lib/utils';
 
-/** Mobile-first shell: fixed topbar + slide-in drawer + content area. */
+/** Mobile-first shell: glass topbar, slide-in drawer, aurora content area, bottom nav. */
 export function AppLayout() {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
+  const location = useLocation();
   const sidebarOpen = useUiStore((s) => s.sidebarOpen);
   const setSidebarOpen = useUiStore((s) => s.setSidebarOpen);
   const [isDesktop, setIsDesktop] = useState(false);
@@ -31,25 +33,29 @@ export function AppLayout() {
   }, [sidebarOpen, isDesktop]);
 
   return (
-    <div className="min-h-dvh bg-background">
+    <div className="min-h-dvh">
       <Topbar onMenuClick={() => setSidebarOpen(!sidebarOpen)} />
 
       <div className="flex">
         {/* Backdrop for the mobile drawer */}
         {sidebarOpen && !isDesktop && (
-          <div className="fixed inset-0 top-14 z-30 bg-black/40" onClick={() => setSidebarOpen(false)} aria-hidden />
+          <div
+            className="fixed inset-0 top-14 z-30 bg-black/40 backdrop-blur-sm"
+            onClick={() => setSidebarOpen(false)}
+            aria-hidden
+          />
         )}
 
         <aside
           className={cn(
-            'fixed top-14 bottom-0 z-40 w-64 border-r bg-card transition-transform lg:sticky lg:top-14 lg:z-0 lg:translate-x-0',
+            'glass fixed top-14 bottom-0 z-40 w-72 border-r shadow-float transition-transform duration-300 lg:sticky lg:top-14 lg:z-0 lg:h-[calc(100dvh-3.5rem)] lg:w-64 lg:translate-x-0 lg:shadow-none',
             sidebarOpen && !isDesktop ? 'translate-x-0' : '-translate-x-full',
           )}
         >
           <div className="flex h-full flex-col">
             <div className="flex items-center justify-between px-4 py-3 lg:hidden">
               <span className="text-sm font-semibold">{t('common.menu')}</span>
-              <button aria-label="close menu" onClick={() => setSidebarOpen(false)} className="p-1">
+              <button aria-label="close menu" onClick={() => setSidebarOpen(false)} className="p-2">
                 <X className="h-5 w-5" />
               </button>
             </div>
@@ -57,10 +63,15 @@ export function AppLayout() {
           </div>
         </aside>
 
-        <main className="min-w-0 flex-1 px-4 py-4 pb-20 lg:px-6">
-          <Outlet />
+        <main className="min-w-0 flex-1 px-3 py-4 pb-28 sm:px-5 lg:px-8 lg:pb-8">
+          {/* Keyed by path so the enter animation replays on navigation. */}
+          <div key={location.pathname} className="page-enter mx-auto w-full max-w-[1400px]">
+            <Outlet />
+          </div>
         </main>
       </div>
+
+      <BottomNav />
     </div>
   );
 }

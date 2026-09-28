@@ -1,0 +1,18 @@
+{
+  "code": "PRJ-2026-011",
+  "nameBn": "পানি ও স্যানিটেশন প্রকল্প",
+  "nameEn": "WASH Project",
+  "donor": "JCF",
+  "grantAgreementNo": "GA-90",
+  "fundCode": "RF-WASH-01",
+  "sector": "wash",
+  "startDate": "2026-01-01",
+  "endDate": "2026-12-31",
+  "targetAreas": ["গাজীপুর", "মিরকাদিম"],
+  "targetBeneficiaries": 200,
+  "managerName": "নাসরিন সুলতানা",
+  "budget": [
+    { "lineItem": "টিউবওয়েল", "amount": "200000", "note": "" },
+    { "lineItem": "প্রশিক্ষণ", "amount": "100000", "note": "" }
+  ]
+}
