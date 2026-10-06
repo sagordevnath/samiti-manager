@@ -31,18 +31,30 @@ export function DashboardPage() {
     retry: false,
   });
 
-  // Placeholder summary until members/savings modules are built.
+  // Live mode: one dedicated endpoint computes every KPI from the database.
+  // Demo mode (or endpoint unavailable): fall back to list-endpoint counts so
+  // every KPI still reflects the demo dataset.
   const summary = useQuery<Summary>({
     queryKey: ['dashboard-summary'],
     queryFn: async () => {
-      // Replace with /dashboard/summary endpoint when backend module lands.
-      const data = await api.get<{ items: unknown[]; total: number }>('/members?pageSize=1').catch(() => null);
-      return {
-        totalMembers: data?.total ?? 0,
-        totalSavings: '0.00',
-        activeLoans: 0,
-        branches: 0,
-      };
+      try {
+        return await api.get<Summary>('/dashboard/summary');
+      } catch {
+        const [members, savings, loans, branches] = await Promise.all([
+          api.get<{ total: number }>('/members?pageSize=1').catch(() => null),
+          api.get<{ items: Array<{ balance?: string | number }> }>('/savings/accounts').catch(() => null),
+          api.get<{ items: Array<{ status?: string }> }>('/loans/applications').catch(() => null),
+          api.get<{ items: unknown[] }>('/org/branches').catch(() => null),
+        ]);
+        const totalSavings = (savings?.items ?? []).reduce((t, a) => t + Number(a.balance ?? 0), 0);
+        const activeLoans = (loans?.items ?? []).filter((l) => ['approved', 'disbursed', 'am_review'].includes(l.status ?? '')).length;
+        return {
+          totalMembers: members?.total ?? 0,
+          totalSavings: totalSavings.toFixed(2),
+          activeLoans,
+          branches: branches?.items?.length ?? 0,
+        };
+      }
     },
     retry: false,
   });

@@ -447,7 +447,7 @@ export function postDemoCollectionEntry(
 }
 
 /** Read-model receipt from a stored entry (requirement 3). */
-function demoReceiptFrom(entry: CollectionDemoData['entries'][number]): CollectionReceipt {
+export function demoReceiptFrom(entry: CollectionDemoData['entries'][number]): CollectionReceipt {
   const member = demoMemberNames[entry.memberId] ?? { name: 'Unknown', code: '—' };
   const loanApplied = entry.allocation.overdueApplied.reduce((s, o) => s + num(o.amount), 0) +
     num(entry.allocation.currentApplied?.amount ?? '0');

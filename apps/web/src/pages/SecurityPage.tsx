@@ -10,7 +10,7 @@
  * Tab 4 প্রাইভেসি: consent records, right-to-correction workflow, retention
  *   rules with purge preview and the member data export (req 5).
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ClipboardCheck, Fingerprint, KeyRound, ShieldCheck } from 'lucide-react';
 import type { AuditRecord, ConsentKind, CorrectionStatus, ProtectedField, RetentionRule } from '@samity/shared';
@@ -47,7 +47,16 @@ function Td({ children, right, className }: { children?: React.ReactNode; right?
   return <td className={`px-2 py-1.5 ${right ? 'text-right tabular-nums' : ''} ${className ?? ''}`}>{children}</td>;
 }
 
-const MEMBER_ID = '00000000-0000-4000-8000-0000000001a1';
+/** First real member id from the live API — the old demo UUID matched no row
+ * on a configured project. Empty string until it loads (manual entry allowed). */
+function useFirstMemberId(): string {
+  const first = useQuery({
+    queryKey: ['members', 'first'],
+    queryFn: () => api.get<{ items: Array<{ id: string }> }>('/members?page=1&pageSize=1'),
+    staleTime: 5 * 60_000,
+  });
+  return first.data?.items?.[0]?.id ?? '';
+}
 
 /* ── Tab 1: audit trail viewer (req 1) ────────────────────────────────────── */
 
@@ -135,11 +144,16 @@ interface MaskedField { field: ProtectedField; masked: string }
 
 function ProtectionTab() {
   const qc = useQueryClient();
-  const [memberId, setMemberId] = useState(MEMBER_ID);
+  const firstMemberId = useFirstMemberId();
+  const [memberId, setMemberId] = useState('');
+  useEffect(() => {
+    if (firstMemberId) setMemberId((cur) => cur || firstMemberId);
+  }, [firstMemberId]);
   const [revealed, setRevealed] = useState<Partial<Record<ProtectedField, string>>>({});
   const fields = useQuery({
     queryKey: ['protected-fields', memberId],
     queryFn: () => api.get<{ items: MaskedField[] }>(`/security/protected-fields/members/${memberId}`),
+    enabled: memberId.length > 0,
   });
   const reveal = useMutation({
     mutationFn: (field: ProtectedField) =>
@@ -401,7 +415,11 @@ interface CorrectionRow {
 
 function PrivacyTab() {
   const qc = useQueryClient();
-  const [memberId, setMemberId] = useState(MEMBER_ID);
+  const firstMemberId = useFirstMemberId();
+  const [memberId, setMemberId] = useState('');
+  useEffect(() => {
+    if (firstMemberId) setMemberId((cur) => cur || firstMemberId);
+  }, [firstMemberId]);
   const [kind, setKind] = useState<ConsentKind>('data_processing');
   const consent = useMutation({
     mutationFn: () => api.post('/privacy/consents', { memberId, kind, granted: true, method: 'written' }),
@@ -410,6 +428,7 @@ function PrivacyTab() {
   const consents = useQuery({
     queryKey: ['consents', memberId],
     queryFn: () => api.get<{ items: { id: string; kind: ConsentKind; granted: boolean; grantedAt: string; textVersion: string }[] }>(`/privacy/consents?memberId=${memberId}`),
+    enabled: memberId.length > 0,
   });
   const corrections = useQuery({
     queryKey: ['corrections'],

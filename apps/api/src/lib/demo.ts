@@ -8,11 +8,32 @@ import { env } from '../env.js';
 import type { AuthUser } from '@samity/shared';
 import { permissionsForRole } from '@samity/shared';
 
+/**
+ * Known non-secret placeholders that must never reach Supabase. Covers the
+ * zod default, the .env.example template value and empty strings — any of
+ * them means "not really configured" and we fall back to demo mode instead
+ * of failing every request with Supabase 401 "Invalid API key".
+ */
+const SERVICE_KEY_PLACEHOLDERS = new Set([
+  'service-role-placeholder',
+  'your-service-role-key-here',
+  'your-service_role_key_here',
+]);
+
+/**
+ * Real Supabase service keys are long (legacy HS256 JWTs ≈ 200–300 chars,
+ * asymmetric sb_secret_… keys ≈ 250+). Anything shorter is template text or
+ * a pasted-in wrong key (e.g. the 46-char publishable/anon key) — serve demo
+ * mode rather than failing every DB call with 401.
+ */
+const MIN_SERVICE_KEY_LENGTH = 100;
+
 export function isDemoMode(): boolean {
   return (
     env.NODE_ENV === 'test' ||
     env.SUPABASE_URL.includes('placeholder') ||
-    env.SUPABASE_SERVICE_ROLE_KEY === 'service-role-placeholder'
+    SERVICE_KEY_PLACEHOLDERS.has(env.SUPABASE_SERVICE_ROLE_KEY) ||
+    env.SUPABASE_SERVICE_ROLE_KEY.trim().length < MIN_SERVICE_KEY_LENGTH
   );
 }
 

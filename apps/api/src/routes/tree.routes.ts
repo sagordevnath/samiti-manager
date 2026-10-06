@@ -98,7 +98,8 @@ treeRouter.get(
       supabaseAdmin.from('working_areas').select('id, branch_id, village, village_bn').is('deleted_at', null),
       supabaseAdmin.from('members').select('branch_id').is('deleted_at', null),
       supabaseAdmin.from('samities').select('branch_id').is('deleted_at', null),
-      supabaseAdmin.from('loans').select('branch_id, principal').is('deleted_at', null).neq('status', 'closed'),
+      // The loan table is loan_applications (0012); no soft-delete column.
+      supabaseAdmin.from('loan_applications').select('branch_id, requested_amount').eq('status', 'disbursed'),
     ]);
     for (const r of [zones, areas, branches, villageRows, memberAgg, samityAgg, loanAgg]) {
       if (r.error) throw r.error;
@@ -114,7 +115,7 @@ treeRouter.get(
     };
     for (const m of (memberAgg.data ?? []) as { branch_id: string }[]) bump(m.branch_id, { members: 1 });
     for (const s of (samityAgg.data ?? []) as { branch_id: string }[]) bump(s.branch_id, { centers: 1 });
-    for (const l of (loanAgg.data ?? []) as { branch_id: string; principal: string }[]) bump(l.branch_id, { outstanding: Number(l.principal) });
+    for (const l of (loanAgg.data ?? []) as { branch_id: string; requested_amount: string }[]) bump(l.branch_id, { outstanding: Number(l.requested_amount) });
 
     const branchNodes: OrgTreeNode[] = (branches.data ?? []).map((b) => {
       const br = b as { id: string; area_id: string | null; name: string; name_bn: string | null; code: string; status: string };

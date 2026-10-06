@@ -878,7 +878,7 @@ export function AccountingPage() {
               <Card>
                 <CardHeader className="pb-2"><CardTitle className="text-base">তহবিল-ভিত্তিক বিবরণী</CardTitle></CardHeader>
                 <CardContent className="space-y-3">
-                  <div className="flex items-end gap-2">
+                  <div className="flex flex-wrap items-end gap-2">
                     <div>
                       <Label htmlFor="fund-name">তহবিল/প্রকল্প</Label>
                       <Input id="fund-name" value={fundName} onChange={(e) => setFundName(e.target.value)} className="w-56" />

@@ -24,7 +24,7 @@ create table if not exists collection_reversals (
   entry_id     uuid not null references collection_entries(id),
   receipt_no   text not null,
   reason       text not null check (char_length(reason) between 10 and 500),
-  reversed_by  uuid not null references staff(id),
+  reversed_by  uuid not null references auth.users(id),
   unapplied    jsonb not null default '{}'::jsonb,
   created_at   timestamptz not null default now(),
   unique (entry_id) -- one reversal per entry; re-posting creates a new entry
@@ -57,10 +57,11 @@ begin
      set balance = balance - ((new.unapplied->>'savings')::numeric(14,2))
    where sa.id = (r.meta->>'savingsAccountId')::uuid
      and new.unapplied->>'savings' is not null;
+  -- INSERT ... VALUES cannot take a WHERE clause; use INSERT ... SELECT ... WHERE.
   insert into savings_transactions (id, org_id, account_id, type, amount, reference, note, created_by, created_at)
-  values (gen_random_uuid(), r.org_id, (r.meta->>'savingsAccountId')::uuid, 'withdrawal',
-          (new.unapplied->>'savings')::numeric(14,2), 'reversal:'||new.id::text,
-          'ভুল এন্ট্রি বাতিল / Wrong-entry reversal', new.reversed_by, now())
+  select gen_random_uuid(), r.org_id, (r.meta->>'savingsAccountId')::uuid, 'withdrawal',
+         (new.unapplied->>'savings')::numeric(14,2), 'reversal:'||new.id::text,
+         'ভুল এন্ট্রি বাতিল / Wrong-entry reversal', new.reversed_by, now()
    where new.unapplied->>'savings' is not null
      and (r.meta->>'savingsAccountId') is not null;
   return new;
@@ -82,12 +83,12 @@ create table if not exists loan_reschedules (
                        ('disaster','illness','seasonal_income','death_in_family','other')),
   note               text not null check (char_length(note) between 3 and 500),
   moved_rows         jsonb not null default '[]'::jsonb,
-  requested_by       uuid references staff(id),
+  requested_by       uuid references auth.users(id),
   requested_at       timestamptz not null default now(),
   status             text not null default 'pending' check (status in ('pending','approved','rejected')),
-  decided_by         uuid references staff(id),
+  decided_by         uuid references auth.users(id),
   decided_at         timestamptz,
-  created_by         uuid references staff(id),
+  created_by         uuid references auth.users(id),
   created_at         timestamptz not null default now(),
   updated_at         timestamptz not null default now(),
   deleted_at         timestamptz
@@ -129,13 +130,13 @@ create table if not exists loan_write_offs (
   reason             text not null check (reason in
                        ('death','permanent_disability','untraceable','fraud','court_written_off','other')),
   note               text not null check (char_length(note) between 10 and 1000),
-  requested_by       uuid references staff(id),
+  requested_by       uuid references auth.users(id),
   requested_at       timestamptz not null default now(),
   status             text not null default 'pending' check (status in ('pending','recommended','approved','rejected')),
-  decided_by         uuid references staff(id),
+  decided_by         uuid references auth.users(id),
   decided_at         timestamptz,
   decision_note      text,
-  created_by         uuid references staff(id),
+  created_by         uuid references auth.users(id),
   created_at         timestamptz not null default now(),
   updated_at         timestamptz not null default now(),
   deleted_at         timestamptz,
@@ -187,8 +188,8 @@ create table if not exists loan_closures (
   closure_amount         numeric(14,2) not null check (closure_amount >= 0),
   remaining_installments int not null default 0,
   closed_at              timestamptz not null default now(),
-  closed_by              uuid references staff(id),
-  created_by             uuid references staff(id),
+  closed_by              uuid references auth.users(id),
+  created_by             uuid references auth.users(id),
   created_at             timestamptz not null default now(),
   unique (application_id)
 );
@@ -205,7 +206,7 @@ create table if not exists collection_fraud_flags (
   detail      text not null,
   detail_bn   text not null,
   reviewed    boolean not null default false,
-  reviewed_by uuid references staff(id),
+  reviewed_by uuid references auth.users(id),
   created_at  timestamptz not null default now()
 );
 create index if not exists idx_fraud_flags_open

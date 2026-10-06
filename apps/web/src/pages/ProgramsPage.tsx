@@ -636,7 +636,7 @@ export function ProgramsPage() {
                       <Label htmlFor="bn-village">গ্রাম</Label>
                       <Input id="bn-village" value={benForm.village} onChange={(e) => setBenForm((f) => ({ ...f, village: e.target.value }))} />
                     </div>
-                    <div className="flex items-end gap-2">
+                    <div className="flex flex-wrap items-end gap-2">
                       <label className="flex items-center gap-1 text-xs">
                         <input type="checkbox" checked={benForm.linked} onChange={(e) => setBenForm((f) => ({ ...f, linked: e.target.checked }))} /> সদস্য লিংক
                       </label>

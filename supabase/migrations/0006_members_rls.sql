@@ -95,6 +95,11 @@ values ('member-documents', 'member-documents', false)
 on conflict (id) do nothing;
 
 -- Path convention: org/<org_id>/member/<member_id>/<photo|signature|doc>.<ext>
+-- Re-run guard: storage.objects is a Supabase system table that schema resets
+-- never drop, so its policies must be removed explicitly first.
+drop policy if exists "member docs read" on storage.objects;
+drop policy if exists "member docs write" on storage.objects;
+
 create policy "member docs read" on storage.objects for select
 using (
   bucket_id = 'member-documents'

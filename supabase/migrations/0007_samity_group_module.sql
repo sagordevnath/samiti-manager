@@ -7,7 +7,7 @@ create type samity_formation_stage as enum ('projection_recorded', 'group_formed
 create type meeting_status as enum ('scheduled', 'in_progress', 'closed', 'cancelled', 'rescheduled');
 create type leader_rotation_status as enum ('active', 'review');
 
-create table samities (
+create table if not exists samities (
   id                uuid primary key default gen_random_uuid(),
   org_id            uuid not null references organizations (id) on delete cascade,
   branch_id         uuid not null references branches (id) on delete cascade,
@@ -32,7 +32,28 @@ create table samities (
   unique (org_id, branch_id, code)
 );
 
-create index samities_org_idx on samities (org_id) where deleted_at is null;
+-- 0001_core already creates a minimal `samities` table; for projects where
+-- that earlier table exists, add the columns this module owns instead of
+-- failing on the re-creation above.
+alter table samities
+  add column if not exists code             text,
+  add column if not exists village          text not null default '',
+  add column if not exists meeting_time     time not null default '17:30:00',
+  add column if not exists meeting_place    text not null default '',
+  add column if not exists field_officer_id uuid references auth.users (id) on delete set null,
+  add column if not exists status           samity_status not null default 'forming',
+  add column if not exists formation_stage  samity_formation_stage not null default 'projection_recorded',
+  add column if not exists projection_note  text,
+  add column if not exists projected_at     timestamptz,
+  add column if not exists observed_at      timestamptz,
+  add column if not exists activated_at     timestamptz,
+  add column if not exists archived_at      timestamptz;
+
+-- The inline unique constraint only applies on fresh creation; mirror it as an
+-- index so pre-0007 tables get it too.
+create unique index if not exists samities_org_branch_code_idx on samities (org_id, branch_id, code);
+
+create index if not exists samities_org_idx on samities (org_id) where deleted_at is null;
 create index samities_field_officer_idx on samities (field_officer_id) where deleted_at is null;
 
 create table groups (

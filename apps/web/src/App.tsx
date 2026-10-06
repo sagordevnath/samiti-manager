@@ -13,6 +13,7 @@ import { MemberAdmissionPage } from '@/pages/MemberAdmissionPage';
 import { MembersPage } from '@/pages/MembersPage';
 import { Member360Page } from '@/pages/Member360Page';
 import { SamityMobilePage } from '@/pages/SamityMobilePage';
+import { SamitiesPage } from '@/pages/SamitiesPage';
 import { SavingsPage } from '@/pages/SavingsPage';
 import { SharesPage } from '@/pages/SharesPage';
 import { PassbookPage } from '@/pages/PassbookPage';
@@ -61,7 +62,8 @@ export default function App() {
         <Route path="/members" element={<MembersPage />} />
         <Route path="/members/:id" element={<Member360Page />} />
         <Route path="/members/new" element={<MemberAdmissionPage />} />
-        <Route path="/samities" element={<SamityMobilePage />} />
+        <Route path="/samities" element={<SamitiesPage />} />
+        <Route path="/samities/mobile" element={<SamityMobilePage />} />
         <Route path="/savings" element={<SavingsPage />} />
         <Route path="/savings/shares" element={<SharesPage />} />
         <Route path="/savings/passbook" element={<PassbookPage />} />

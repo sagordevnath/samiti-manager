@@ -65,11 +65,25 @@ create policy cash_book_write on cash_book_days
   for all using (org_id = auth_org_id() and auth_user_role() in ('super_admin','org_admin','branch_manager','account_officer'))
   with check (org_id = auth_org_id() and auth_user_role() in ('super_admin','org_admin','branch_manager','account_officer'));
 
+-- cash_book_lines has no org_id column; route the org check through its
+-- parent cash_book_days (a bare org_id reference here failed with 42703).
 create policy cash_book_lines_read on cash_book_lines
-  for select using (org_id = auth_org_id() and auth_user_role() in ('super_admin','org_admin','area_manager','branch_manager','account_officer'));
+  for select using (
+    exists (select 1 from cash_book_days d
+            where d.id = cash_book_lines.cash_book_id
+              and d.org_id = auth_org_id())
+    and auth_user_role() in ('super_admin','org_admin','area_manager','branch_manager','account_officer'));
 create policy cash_book_lines_write on cash_book_lines
-  for all using (org_id = auth_org_id() and auth_user_role() in ('super_admin','org_admin','branch_manager','account_officer'))
-  with check (org_id = auth_org_id() and auth_user_role() in ('super_admin','org_admin','branch_manager','account_officer'));
+  for all using (
+    exists (select 1 from cash_book_days d
+            where d.id = cash_book_lines.cash_book_id
+              and d.org_id = auth_org_id())
+    and auth_user_role() in ('super_admin','org_admin','branch_manager','account_officer'))
+  with check (
+    exists (select 1 from cash_book_days d
+            where d.id = cash_book_lines.cash_book_id
+              and d.org_id = auth_org_id())
+    and auth_user_role() in ('super_admin','org_admin','branch_manager','account_officer'));
 
 -- ── Bank reconciliation ─────────────────────────────────────────────────────
 create policy bank_rec_read on bank_reconciliations

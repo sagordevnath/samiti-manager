@@ -19,9 +19,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { api } from '@/lib/api';
-
-const API_URL = import.meta.env.VITE_API_URL ?? '/api/v1';
+import { api, downloadFile, openFileInTab } from '@/lib/api';
 
 const TABS = ['protection', 'builder', 'exports', 'freeze'] as const;
 type Tab = (typeof TABS)[number];
@@ -522,7 +520,13 @@ function ExportsTab() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['mis-ops', 'schedules'] }),
   });
 
-  const exportHref = (format: string) => `${API_URL}/mis-ops/export/standard/${stdKind}/${format}`;
+  // Auth-gated endpoint: fetch with Bearer and save as a Blob (a plain href
+  // would 401). PDF stays a tab-open so the user can print it.
+  const runExport = (format: string) => {
+    const path = `/mis-ops/export/standard/${stdKind}/${format}`;
+    const p = format === 'pdf' ? openFileInTab(path) : downloadFile(path);
+    void p.catch((e: Error) => window.alert(e.message));
+  };
 
   return (
     <div className="space-y-4">
@@ -553,15 +557,13 @@ function ExportsTab() {
               { fmt: 'excel', label: 'Excel' },
               { fmt: 'pdf', label: 'PDF (প্রিন্ট)' },
             ].map((b) => (
-              <a
+              <button
                 key={b.fmt}
                 className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-                href={exportHref(b.fmt)}
-                target="_blank"
-                rel="noreferrer"
+                onClick={() => runExport(b.fmt)}
               >
                 {b.label}
-              </a>
+              </button>
             ))}
           </div>
           <p className="text-xs text-muted-foreground">

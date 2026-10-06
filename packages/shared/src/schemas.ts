@@ -37,6 +37,15 @@ export const memberCreateSchema = z.object({
 });
 export type MemberCreateInput = z.infer<typeof memberCreateSchema>;
 
+/** Partial update: at least one field must be present. */
+export const memberUpdateSchema = memberCreateSchema
+  .extend({ samityId: uuidSchema })
+  .partial()
+  .refine((v) => Object.values(v).some((x) => x !== undefined), {
+    message: 'অন্তত একটি ফিল্ড দিন / Provide at least one field',
+  });
+export type MemberUpdateInput = z.infer<typeof memberUpdateSchema>;
+
 /** ── Pagination envelope ─────────────────────────────────────────────────── */
 export const paginationQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),

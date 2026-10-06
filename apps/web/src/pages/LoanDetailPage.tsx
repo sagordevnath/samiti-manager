@@ -357,7 +357,7 @@ export function LoanDetailPage() {
                 ? ' পরিমাণ সীমার ঊর্ধ্বে — অনুমোদন এরিয়া ব্যবস্থাপকের কাছে যাবে।'
                 : ' সীমার মধ্যে — সরাসরি অনুমোদন করা যাবে।'}
             </p>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button className="bg-emerald-600 hover:bg-emerald-700" disabled={decide.isPending} onClick={() => decide.mutate({ decision: 'approve' })}>
                 অনুমোদন / এগিয়ে পাঠান
               </Button>
@@ -380,7 +380,7 @@ export function LoanDetailPage() {
             <CardTitle className="text-lg">এরিয়া ব্যবস্থাপকের অনুমোদন</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button className="bg-emerald-600 hover:bg-emerald-700" disabled={decide.isPending} onClick={() => decide.mutate({ decision: 'approve' })}>
                 চূড়ান্ত অনুমোদন
               </Button>

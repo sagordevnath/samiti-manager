@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { api } from '@/lib/api';
+import { api, downloadFile } from '@/lib/api';
 import { useMoneyFormatter } from '@/lib/digits';
 
 const TABS = ['dashboard', 'reports', 'ratios', 'regulatory'] as const;
@@ -632,7 +632,13 @@ export function MisPage() {
                         {r.submittedAt ? <Pill label="দাখিলকৃত" tone="bg-emerald-100 text-emerald-800" /> : (
                           <Button size="sm" variant="outline" disabled={busy} onClick={() => act(() => submitReturn.mutateAsync(r.id))}>দাখিল করুন</Button>
                         )}
-                        <a className="rounded-md border px-2 py-1 text-xs hover:bg-muted" href={`/api/v1/mis/returns/${r.id}/export`} target="_blank" rel="noreferrer">এক্সপোর্ট</a>
+                        {/* Auth-gated endpoint: fetch with Bearer and save as a Blob (a plain href would 401). */}
+                        <button
+                          className="rounded-md border px-2 py-1 text-xs hover:bg-muted"
+                          onClick={() => void downloadFile(`/mis/returns/${r.id}/export`).catch((e: Error) => setError(e.message))}
+                        >
+                          এক্সপোর্ট
+                        </button>
                       </div>
                     </CardTitle>
                   </CardHeader>

@@ -10,6 +10,7 @@ import { authRouter } from './routes/auth.routes.js';
 import { healthRouter } from './routes/health.routes.js';
 import { membersRouter } from './routes/members.routes.js';
 import { membersDemoRouter } from './routes/members.demo.routes.js';
+import { dashboardRouter } from './routes/dashboard.routes.js';
 import { navRouter } from './routes/nav.routes.js';
 import { orgRouter } from './routes/org.routes.js';
 import { samityRouter } from './routes/samity.routes.js';
@@ -32,9 +33,23 @@ import { securityRouter } from './routes/security.routes.js';
 import { privacyRouter } from './routes/privacy.routes.js';
 import { auditMutationTrail, csrfGuard, sessionTimeoutMiddleware } from './middleware/security.js';
 import { collectionDemoRouter } from './routes/collection.demo.routes.js';
+import { collectionRouter } from './routes/collection.routes.js';
 import { delinquencyRouter } from './routes/delinquency.routes.js';
 import { delinquencyRecoveryRouter } from './routes/delinquency-recovery.routes.js';
 import { isDemoMode } from './lib/demo.js';
+import { accountingRouter } from './routes/accounting.routes.js';
+import { hrRouter } from './routes/hr.routes.js';
+import { workRouter } from './routes/work.routes.js';
+import { delinquencyLiveRouter } from './routes/delinquency-live.routes.js';
+import { programsLiveRouter } from './routes/programs-live.routes.js';
+import { insWelfareLiveRouter } from './routes/insurance-welfare-live.routes.js';
+import { coopGovLiveRouter } from './routes/coop-governance-live.routes.js';
+import { misLiveRouter } from './routes/mis-live.routes.js';
+import { misOpsLiveRouter } from './routes/mis-ops-live.routes.js';
+import { commLiveRouter } from './routes/comms-live.routes.js';
+import { commBulkLiveRouter, documentsLiveRouter, publicVerifyLiveRouter } from './routes/documents-live.routes.js';
+import { securityLiveRouter } from './routes/security-live.routes.js';
+import { privacyLiveRouter } from './routes/privacy-live.routes.js';
 
 export function createApp() {
   const app = express();
@@ -94,6 +109,9 @@ export function createApp() {
   // Member module: demo mode serves the in-memory admissions wizard; a
   // configured project gets the Supabase-backed router.
   app.use('/api/v1/members', isDemoMode() ? membersDemoRouter : membersRouter);
+  // Dashboard KPIs are served straight from the database in live mode; the
+  // web page falls back to list-endpoint counts in demo mode.
+  if (!isDemoMode()) app.use('/api/v1/dashboard', dashboardRouter);
   app.use('/api/v1/samities', samityRouter);
   app.use('/api/v1/nav', navRouter);
   app.use('/api/v1/org', orgRouter);
@@ -102,12 +120,16 @@ export function createApp() {
   // a configured project gets the real Supabase-backed router.
   app.use('/api/v1/savings', isDemoMode() ? savingsDemoRouter : savingsRouter);
   app.use('/api/v1/loans', isDemoMode() ? loansDemoRouter : loansRouter);
-  if (isDemoMode()) app.use('/api/v1/collection', collectionDemoRouter);
+  // Collection: live mode serves the Supabase-backed router (0020/0022/0058);
+  // demo mode keeps the in-memory store.
+  app.use('/api/v1/collection', isDemoMode() ? collectionDemoRouter : collectionRouter);
   if (isDemoMode()) app.use('/api/v1/delinquency', delinquencyRouter);
   if (isDemoMode()) app.use('/api/v1/delinquency', delinquencyRecoveryRouter);
-  if (isDemoMode()) app.use('/api/v1/accounting', accountingDemoRouter);
-  if (isDemoMode()) app.use('/api/v1/hr', hrDemoRouter);
-  if (isDemoMode()) app.use('/api/v1/work', workDemoRouter);
+  // Live mode: Supabase-backed routers for the same surfaces.
+  if (!isDemoMode()) app.use('/api/v1/delinquency', delinquencyLiveRouter);
+  app.use('/api/v1/accounting', isDemoMode() ? accountingDemoRouter : accountingRouter);
+  app.use('/api/v1/hr', isDemoMode() ? hrDemoRouter : hrRouter);
+  app.use('/api/v1/work', isDemoMode() ? workDemoRouter : workRouter);
   if (isDemoMode()) app.use('/api/v1/insurance', insWelfareRouter);
   if (isDemoMode()) app.use('/api/v1/coop', coopGovRouter);
   if (isDemoMode()) app.use('/api/v1/programs', programsRouter);
@@ -117,9 +139,23 @@ export function createApp() {
   if (isDemoMode()) app.use('/api/v1/documents', documentsRouter);
   if (isDemoMode()) app.use('/api/v1/security', securityRouter);
   if (isDemoMode()) app.use('/api/v1/privacy', privacyRouter);
-  // Public verification (req 7) — mounted without auth intentionally.
-  app.use('/api/v1/public', publicVerifyRouter);
+  // Live mode: Supabase-backed routers for the same module surfaces.
+  if (!isDemoMode()) app.use('/api/v1/insurance', insWelfareLiveRouter);
+  if (!isDemoMode()) app.use('/api/v1/coop', coopGovLiveRouter);
+  if (!isDemoMode()) app.use('/api/v1/programs', programsLiveRouter);
+  if (!isDemoMode()) app.use('/api/v1/mis', misLiveRouter);
+  if (!isDemoMode()) app.use('/api/v1/mis-ops', misOpsLiveRouter);
+  if (!isDemoMode()) app.use('/api/v1/comms', commLiveRouter);
+  if (!isDemoMode()) app.use('/api/v1/documents', documentsLiveRouter);
+  if (!isDemoMode()) app.use('/api/v1/security', securityLiveRouter);
+  if (!isDemoMode()) app.use('/api/v1/privacy', privacyLiveRouter);
+  // Public verification (req 7) — mounted without auth intentionally; live
+  // mode verifies against the `documents` table, demo against the in-memory
+  // doc store.
+  app.use('/api/v1/public', isDemoMode() ? publicVerifyRouter : publicVerifyLiveRouter);
   if (isDemoMode()) app.use('/api/v1/comms/bulk', commBulkRouter);
+  // Bulk jobs (comm module) — same worker surface backed by Supabase.
+  if (!isDemoMode()) app.use('/api/v1/comms/bulk', commBulkLiveRouter);
 
   // 404 for unknown API paths.
   app.use((_req, res) => {

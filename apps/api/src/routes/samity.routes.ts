@@ -1,6 +1,14 @@
 import { Router } from 'express';
-import { groupCreateSchema, meetingCreateSchema, samityCreateSchema, meetingAttendanceLimitCheck } from '@samity/shared';
+import {
+  groupCreateSchema,
+  meetingCreateSchema,
+  samityCreateSchema,
+  samityUpdateSchema,
+  meetingAttendanceLimitCheck,
+} from '@samity/shared';
 import { Conflict, NotFound } from '../lib/errors.js';
+import { isDemoMode } from '../lib/demo.js';
+import { orgDemoStore } from '../lib/org-store.js';
 import { supabaseAdmin } from '../lib/supabase.js';
 import { requireAuth, requirePermission, type RequestWithAuth } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/error.js';
@@ -14,7 +22,18 @@ samityRouter.get(
   requirePermission('member:read'),
   asyncHandler(async (req, res) => {
     const auth = (req as RequestWithAuth).auth!;
-    let query = supabaseAdmin.from('samities').select('*').is('deleted_at', null).order('created_at', { ascending: false });
+    // Demo mode serves the in-memory org dataset (same shapes as the DB rows).
+    if (isDemoMode()) {
+      res.json({ items: orgDemoStore().samities });
+      return;
+    }
+    // Embed the parent branch so the UI can show the branch name next to each
+    // samity (list + edit form) straight from the database.
+    let query = supabaseAdmin
+      .from('samities')
+      .select('*, branches(code, name, name_bn)')
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false });
     if (auth.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
     const { data, error } = await query;
     if (error) throw error;
@@ -61,6 +80,69 @@ samityRouter.post(
 
     if (error) throw error;
     res.status(201).json({ samity: data });
+  }),
+);
+
+/** PATCH /api/v1/samities/:id — partial update of samity attributes. */
+samityRouter.patch(
+  '/:id',
+  requirePermission('member:write'),
+  validate(samityUpdateSchema),
+  asyncHandler(async (req, res) => {
+    const auth = (req as RequestWithAuth).auth!;
+    const body = req.body as {
+      branchId?: string;
+      code?: string;
+      name?: string;
+      village?: string;
+      meetingDay?: string;
+      meetingTime?: string;
+      meetingPlace?: string;
+      fieldOfficerId?: string;
+      status?: string;
+    };
+
+    const patch: Record<string, unknown> = {};
+    if (body.branchId !== undefined) patch['branch_id'] = body.branchId;
+    if (body.code !== undefined) patch['code'] = body.code;
+    if (body.name !== undefined) patch['name'] = body.name;
+    if (body.village !== undefined) patch['village'] = body.village;
+    if (body.meetingDay !== undefined) patch['meeting_day'] = body.meetingDay;
+    if (body.meetingTime !== undefined) patch['meeting_time'] = body.meetingTime;
+    if (body.meetingPlace !== undefined) patch['meeting_place'] = body.meetingPlace;
+    if (body.fieldOfficerId !== undefined) patch['field_officer_id'] = body.fieldOfficerId;
+    if (body.status !== undefined) patch['status'] = body.status;
+
+    let query = supabaseAdmin
+      .from('samities')
+      .update(patch)
+      .eq('id', req.params['id'] as string)
+      .is('deleted_at', null);
+    if (auth.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
+
+    const { data, error } = await query.select('*').single();
+    if (error || !data) throw NotFound('Samity not found');
+    res.json({ samity: data });
+  }),
+);
+
+/** DELETE /api/v1/samities/:id — soft delete only (sets deleted_at). */
+samityRouter.delete(
+  '/:id',
+  requirePermission('member:write'),
+  asyncHandler(async (req, res) => {
+    const auth = (req as RequestWithAuth).auth!;
+
+    let query = supabaseAdmin
+      .from('samities')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', req.params['id'] as string)
+      .is('deleted_at', null);
+    if (auth.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
+
+    const { error } = await query;
+    if (error) throw error;
+    res.status(204).send();
   }),
 );
 

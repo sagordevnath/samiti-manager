@@ -47,7 +47,7 @@ create table if not exists payroll_lines (
   id               uuid primary key default gen_random_uuid(),
   org_id           uuid not null references organizations(id),
   payroll_id       uuid not null references payroll_runs(id) on delete cascade,
-  staff_id         uuid not null references staff(id),
+  staff_id         uuid not null references hr_staff(id),
   components       jsonb not null, -- {basic, house_rent, medical, conveyance, field_allowance}
   gross            numeric(14,2) not null,
   deductions       jsonb not null, -- {pf_employee, tax, loan_advance, other}
@@ -101,7 +101,7 @@ create trigger trg_payroll_immutable before update or delete on payroll_lines
 create table if not exists pf_ledger (
   id               uuid primary key default gen_random_uuid(),
   org_id           uuid not null references organizations(id),
-  staff_id         uuid not null references staff(id),
+  staff_id         uuid not null references hr_staff(id),
   period           text check (period is null or period ~ '^\d{4}-\d{2}$'),
   type             text not null check (type in ('contribution','interest','withdrawal','transfer_out')),
   employee_amount  numeric(14,2) not null default 0,
@@ -142,7 +142,7 @@ create trigger trg_pf_balance before insert on pf_ledger
 create table if not exists gratuity_settlements (
   id            uuid primary key default gen_random_uuid(),
   org_id        uuid not null references organizations(id),
-  staff_id      uuid not null references staff(id),
+  staff_id      uuid not null references hr_staff(id),
   joining_date  date not null,
   leaving_date  date not null,
   last_basic    numeric(14,2) not null,
@@ -159,7 +159,7 @@ create table if not exists gratuity_settlements (
 create table if not exists kpi_scorecards (
   id         uuid primary key default gen_random_uuid(),
   org_id     uuid not null references organizations(id),
-  staff_id   uuid not null references staff(id),
+  staff_id   uuid not null references hr_staff(id),
   period     text not null check (period ~ '^\d{4}-\d{2}$'),
   actuals    jsonb not null, -- {collection_rate, par, new_members, meeting_attendance}
   scores     jsonb not null,
@@ -175,7 +175,7 @@ create table if not exists kpi_scorecards (
 create table if not exists staff_appraisals (
   id           uuid primary key default gen_random_uuid(),
   org_id       uuid not null references organizations(id),
-  staff_id     uuid not null references staff(id),
+  staff_id     uuid not null references hr_staff(id),
   year         text not null check (year ~ '^\d{4}$'),
   scores       jsonb not null,
   comments     text not null default '',
@@ -194,7 +194,7 @@ create table if not exists staff_appraisals (
 create table if not exists disciplinary_cases (
   id            uuid primary key default gen_random_uuid(),
   org_id        uuid not null references organizations(id),
-  staff_id      uuid not null references staff(id),
+  staff_id      uuid not null references hr_staff(id),
   severity      text not null check (severity in ('verbal_warning','written_warning','show_cause','suspension','termination')),
   incident_date date not null,
   description   text not null,

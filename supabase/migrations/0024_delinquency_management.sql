@@ -196,7 +196,9 @@ as $$
          agg.loans_total, agg.loans_at_risk
   from agg
   left join branches b on p_scope = 'branch' and b.id = agg.node_id
-  left join working_areas a on p_scope = 'samity' and a.id = agg.node_id
+  -- samity scope: node_id is a samities.id; samities has a name column
+  -- (working_areas does not, and the old join here caused 42703).
+  left join samities a on p_scope = 'samity' and a.id = agg.node_id
   left join areas z on p_scope = 'area' and z.id = agg.node_id
   left join organizations o on p_scope in ('org','zone') and o.id = agg.node_id;
 $$;

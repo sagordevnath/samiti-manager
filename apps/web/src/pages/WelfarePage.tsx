@@ -342,7 +342,7 @@ export function WelfarePage() {
                     <span className="flex items-center gap-2">
                       <ShieldCheck className="h-4 w-4" /> ক্রেডিট লাইফ পলিসি (ঋণ বিতরণে ইস্যু)
                     </span>
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
                       <Button size="sm" variant="outline" disabled={busy} onClick={() => act(() => issuePolicy.mutateAsync())}>
                         নমুনা পলিসি ইস্যু (কমল হোসেন)
                       </Button>
@@ -729,7 +729,7 @@ export function WelfarePage() {
                 <CardHeader className="pb-2">
                   <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-base">
                     <span>খতিয়ান</span>
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
                       <Button size="sm" variant="outline" disabled={busy} onClick={() => act(() => contribute.mutateAsync())}>
                         নমুনা চাঁদা জমা (সদস্য ৫০০৳)
                       </Button>

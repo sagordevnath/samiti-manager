@@ -83,11 +83,33 @@ export interface StaffAssignmentRow {
   note: string | null;
 }
 
+/** Samity (center) row as served by GET /api/v1/samities in demo mode. */
+export interface SamityRow {
+  id: string;
+  org_id: string;
+  branch_id: string;
+  code: string;
+  name: string;
+  name_bn: string | null;
+  village: string | null;
+  meeting_day: string | null;
+  meeting_time: string | null;
+  meeting_place: string | null;
+  field_officer_id: string | null;
+  status: string;
+  formation_stage: string | null;
+  created_at: string;
+  archived_at: string | null;
+  deleted_at: string | null;
+  branches: { code: string; name: string; name_bn: string | null } | null;
+}
+
 export interface OrgDemoData {
   orgId: string;
   zones: ZoneRow[];
   areas: AreaRow[];
   branches: BranchProfileRow[];
+  samities: SamityRow[];
   workingAreas: WorkingAreaRow[];
   openings: BranchOpeningRow[];
   assignments: StaffAssignmentRow[];
@@ -284,7 +306,48 @@ function build(): OrgDemoData {
     [branches[2]!.id]: { members: 0, centers: 0, outstandingLoans: '0.00' },
   };
 
-  return { orgId, zones, areas, branches, workingAreas, openings, assignments, branchStats };
+  const samityRow = (
+    id: string,
+    branchId: string,
+    code: string,
+    name: string,
+    nameBn: string,
+    village: string,
+    meetingDay: string,
+    meetingTime: string,
+    status = 'active',
+    officerId: string | null = null,
+  ): SamityRow => ({
+    id,
+    org_id: orgId,
+    branch_id: branchId,
+    code,
+    name,
+    name_bn: nameBn,
+    village,
+    meeting_day: meetingDay,
+    meeting_time: meetingTime,
+    meeting_place: `${village} সমাজ কেন্দ্র`,
+    field_officer_id: officerId,
+    status,
+    formation_stage: status === 'active' ? 'activated' : 'projection_recorded',
+    created_at: '2024-01-15T00:00:00.000Z',
+    archived_at: null,
+    deleted_at: null,
+    branches: (() => {
+      const b = branches.find((x) => x.id === branchId);
+      return b ? { code: b.code, name: b.name, name_bn: b.name_bn } : null;
+    })(),
+  });
+
+  const samities: SamityRow[] = [
+    samityRow('00000000-0000-4000-8000-0000000000s1', branches[0]!.id, 'DHK01-S01', 'Rupali Samity', 'রূপালী সমিতি', 'Panthapath', 'Saturday', '10:00', 'active', '00000000-0000-4000-8000-0000000002a1'),
+    samityRow('00000000-0000-4000-8000-0000000000s2', branches[0]!.id, 'DHK01-S02', 'Jonaki Samity', 'জনকী সমিতি', 'Green Road', 'Sunday', '16:00', 'active', '00000000-0000-4000-8000-0000000002a2'),
+    samityRow('00000000-0000-4000-8000-0000000000s3', branches[1]!.id, 'DHK02-S01', 'Ashar Alo Samity', 'আশার আলো সমিতি', 'Sector 7', 'Monday', '09:30', 'active', '00000000-0000-4000-8000-0000000002a3'),
+    samityRow('00000000-0000-4000-8000-0000000000s4', branches[1]!.id, 'DHK02-S02', 'Doyel Samity', 'দোয়েল সমিতি', 'Sector 4', 'Wednesday', '15:30', 'forming', null),
+  ];
+
+  return { orgId, zones, areas, branches, samities, workingAreas, openings, assignments, branchStats };
 }
 
 let store: OrgDemoData | null = null;

@@ -11,6 +11,11 @@ alter table holiday_calendar enable row level security;
 alter table meeting_reschedule_requests enable row level security;
 alter table samity_merge_requests enable row level security;
 
+-- 0002_rls already creates these two policies on samities; replace them so
+-- the wider staff set below takes effect.
+drop policy if exists samities_read_org on samities;
+drop policy if exists samities_write_staff on samities;
+
 create policy samities_read_org on samities for select using (org_id = auth_org_id());
 create policy samities_write_staff on samities for all using (
   org_id = auth_org_id() and auth_user_role() in ('super_admin','org_admin','area_manager','branch_manager','account_officer')

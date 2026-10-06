@@ -36,6 +36,7 @@ import {
   demoCashSummary,
   demoClosureQuote,
   demoCollectionDashboard,
+  demoReceiptFrom,
   DEMO_OFFICER_ID,
   getDemoRules,
   listDemoFraudFlags,
@@ -145,8 +146,10 @@ collectionDemoRouter.get(
     const coll = collectionDemoStore();
     const entry = coll.entries.find((e) => e.idempotencyKey === (req.params['idempotencyKey'] as string));
     if (!entry) throw NotFound('Receipt not found');
-    // Reuse the private builder through the store's read model.
-    res.json({ entry: entry });
+    // Same contract as the live router: a full CollectionReceipt read model
+    // (member name/code resolved) so clients can re-print / share offline-captured
+    // entries from any device.
+    res.json({ entry: demoReceiptFrom(entry) });
   }),
 );
 

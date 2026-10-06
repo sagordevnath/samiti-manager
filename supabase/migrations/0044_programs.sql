@@ -246,7 +246,9 @@ begin
   where batch_id = new.batch_id and beneficiary_id = new.beneficiary_id;
 
   if v_marks = 0 or v_present < ceil(v_marks * 0.6) then
-    raise exception 'CERTIFICATE_REQUIRES_ATTENDANCE (>=60%)'
+    -- a literal % in a RAISE format string must be doubled (%%), or PL/pgSQL
+    -- parses it as a parameter placeholder ("too few parameters for RAISE").
+    raise exception 'CERTIFICATE_REQUIRES_ATTENDANCE (>=60%%)'
       using errcode = 'check_violation';
   end if;
 

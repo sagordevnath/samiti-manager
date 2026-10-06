@@ -180,8 +180,11 @@ describe('Approval inbox (req 7)', () => {
 
 describe('Escalations (req 8)', () => {
   it('sweeps aged tasks and findings into the ledger without duplicates', async () => {
-    // Seed an overdue task (8 days) and an overdue finding so tiers fire.
-    await post('/api/v1/work/tasks', { type: 'manual', title: 'পুরোনো বকেয়া কাজ', assigneeId: F1, dueDate: '2026-09-16' });
+    // Seed a task 8 days overdue relative to *today* (time-bomb-proof): the
+    // tier boundary is 7 days → area_manager. Hardcoding a past date broke
+    // once real time crossed the 14-day org_admin tier.
+    const dueDate = new Date(Date.now() - 8 * 86_400_000).toISOString().slice(0, 10);
+    await post('/api/v1/work/tasks', { type: 'manual', title: 'পুরোনো বকেয়া কাজ', assigneeId: F1, dueDate });
     const overdueFinding = await post('/api/v1/work/findings', {
       auditId: AUDIT_ID,
       title: 'নগদ ঘাটতি (পুরোনো)',

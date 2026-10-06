@@ -92,9 +92,19 @@ create table if not exists work_targets (
   created_by     uuid,
   created_at     timestamptz not null default now(),
   updated_at     timestamptz not null default now(),
-  deleted_at     timestamptz,
-  unique (org_id, scope, coalesce(owner_branch_id::text,'-'), coalesce(owner_staff_id::text,'-'), period)
+  deleted_at     timestamptz
 );
+
+-- Inline UNIQUE constraints cannot contain expressions (coalesce on nullable
+-- owner columns here); an expression unique index is the PostgreSQL-correct
+-- equivalent.
+create unique index if not exists uq_work_targets_scope_owner_period
+  on work_targets (
+    org_id, scope,
+    coalesce(owner_branch_id::text, '-'),
+    coalesce(owner_staff_id::text, '-'),
+    period
+  );
 
 create index if not exists idx_work_targets_period on work_targets(org_id, period, scope);
 

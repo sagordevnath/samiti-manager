@@ -2,16 +2,20 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemberAdmissionPage } from './MemberAdmissionPage';
 import '@/lib/i18n';
 
 describe('MemberAdmissionPage', () => {
   it('shows the onboarding stages and core member fields across the wizard', async () => {
     const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
-      <MemoryRouter>
-        <MemberAdmissionPage />
-      </MemoryRouter>,
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <MemberAdmissionPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
     );
 
     expect(screen.getByText(/Field survey|মাঠ জরিপ/i)).toBeInTheDocument();

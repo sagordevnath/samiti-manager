@@ -20,7 +20,10 @@ create table if not exists collection_entries (
   captured_at     timestamptz,
   note            text,
   created_by      uuid references auth.users(id),
-  created_at      timestamptz not null default now()
+  created_at      timestamptz not null default now(),
+  -- soft delete support (referenced by v_collection_dashboard and the API's
+  -- `.is('deleted_at', null)` convention); nullable so legacy rows are valid.
+  deleted_at      timestamptz
 );
 
 create index if not exists collection_entries_branch_date_idx

@@ -94,7 +94,7 @@ export function LoansPage() {
         <CardHeader className="pb-3">
           <CardTitle className="text-lg">সকল আবেদন</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b text-left text-muted-foreground">

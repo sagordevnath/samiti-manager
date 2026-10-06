@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Ban, CheckCircle2, ChevronLeft, ChevronRight, Loader2, ShieldCheck, UserRoundCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -107,13 +108,57 @@ function stepIsComplete(stepIndex: number, form: typeof initialForm) {
   }
 }
 
+type BranchOpt = { id: string; name: string; name_bn: string | null; code: string };
+type SamityOpt = { id: string; name: string; code: string; branch_id: string };
+type AreaOpt = { id: string; village: string; branch_id: string | null };
+
 export function MemberAdmissionPage() {
+  const qc = useQueryClient();
   const [currentStep, setCurrentStep] = useState(0);
   const [form, setForm] = useState(initialForm);
   const [submitted, setSubmitted] = useState(false);
   const [duplicates, setDuplicates] = useState<DuplicateCheckResult | null>(null);
   const [view, setView] = useState<AdmissionView | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // Placement comes from the live database: branch, samity and working area.
+  const [placement, setPlacement] = useState({ branchId: '', samityId: '', workingAreaId: '' });
+
+  // Real branches / samities / working areas for the wizard's placement selects.
+  const branches = useQuery({
+    queryKey: ['org-branches'],
+    queryFn: () => api.get<{ items: BranchOpt[] }>('/org/branches'),
+    retry: false,
+  });
+  const samities = useQuery({
+    queryKey: ['samities'],
+    queryFn: () => api.get<{ items: SamityOpt[] }>('/samities'),
+    retry: false,
+  });
+  const workingAreas = useQuery({
+    queryKey: ['working-areas'],
+    queryFn: () => api.get<{ items: AreaOpt[] }>('/org/working-areas'),
+    retry: false,
+  });
+
+  const branchList = branches.data?.items ?? [];
+  const areaList = workingAreas.data?.items ?? [];
+  const samityList = useMemo(() => {
+    const items = samities.data?.items ?? [];
+    return placement.branchId ? items.filter((s) => s.branch_id === placement.branchId) : items;
+  }, [samities.data, placement.branchId]);
+
+  // Pre-select the first real row of each list so the wizard always submits a
+  // valid database-backed placement when one exists.
+  useEffect(() => {
+    if (!placement.branchId && branchList[0]) {
+      setPlacement((p) => ({ ...p, branchId: branchList[0]!.id }));
+    }
+  }, [branchList, placement.branchId]);
+  useEffect(() => {
+    if (!placement.workingAreaId && areaList[0]) {
+      setPlacement((p) => ({ ...p, workingAreaId: areaList[0]!.id }));
+    }
+  }, [areaList, placement.workingAreaId]);
 
   const progress = useMemo(() => ((currentStep + 1) / STAGES.length) * 100, [currentStep]);
 
@@ -134,12 +179,20 @@ export function MemberAdmissionPage() {
       setCurrentStep((prev) => prev + 1);
       return;
     }
-    // Final stage: submit the draft to the server (falls back to local demo
-    // state when the API is unreachable).
+    // Final stage: submit the draft to the server, which creates the real
+    // member row. Placement falls back to the first database row and then to
+    // the legacy demo constants so the wizard also works offline/demo.
+    const effBranchId =
+      placement.branchId || branchList[0]?.id || '00000000-0000-4000-8000-0000000000b1';
+    const effAreaId =
+      placement.workingAreaId || areaList[0]?.id || '00000000-0000-4000-8000-0000000000a1';
+    const effSamityName =
+      samityList.find((s) => s.id === placement.samityId)?.name ?? samityList[0]?.name ?? 'Rupali Samity';
+
     setSubmitting(true);
     try {
       const res = await api.post<{ admission: AdmissionView }>('/members/admissions', {
-        branchId: '00000000-0000-4000-8000-0000000000b1',
+        branchId: effBranchId,
         draft: {
           fullName: form.fullName,
           fullNameBn: form.fullNameBn,
@@ -150,8 +203,8 @@ export function MemberAdmissionPage() {
           dob: form.dob,
           mobile: form.mobile,
           address: form.address,
-          workingAreaId: '00000000-0000-4000-8000-0000000000a1',
-          samityName: 'Rupali Samity',
+          workingAreaId: effAreaId,
+          samityName: effSamityName,
           occupation: form.occupation,
           monthlyHouseholdIncome: form.monthlyHouseholdIncome,
           landOwnedDecimals: Number(form.landOwnedDecimals || 0),
@@ -162,6 +215,10 @@ export function MemberAdmissionPage() {
         },
       });
       setView(res.admission);
+      // Members section + Dashboard refresh immediately with the new member.
+      void qc.invalidateQueries({ queryKey: ['members'] });
+      void qc.invalidateQueries({ queryKey: ['dashboard-summary'] });
+      void qc.invalidateQueries({ queryKey: ['samities'] });
     } catch {
       setView(null);
     } finally {
@@ -246,6 +303,54 @@ export function MemberAdmissionPage() {
                   <div className="space-y-2">
                     <Label htmlFor="mobile">Mobile / মোবাইল</Label>
                     <Input id="mobile" value={form.mobile} onChange={(e) => updateField('mobile', e.target.value)} placeholder="01712345678" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="admBranch">Branch / শাখা</Label>
+                    <select
+                      id="admBranch"
+                      className="flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm"
+                      value={placement.branchId}
+                      onChange={(e) => setPlacement((p) => ({ ...p, branchId: e.target.value, samityId: '' }))}
+                    >
+                      <option value="">— নির্বাচন —</option>
+                      {branchList.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.name_bn ?? b.name} ({b.code})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="admSamity">Samity / সমিতি</Label>
+                    <select
+                      id="admSamity"
+                      className="flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm"
+                      value={placement.samityId}
+                      onChange={(e) => setPlacement((p) => ({ ...p, samityId: e.target.value }))}
+                    >
+                      <option value="">— নির্বাচন —</option>
+                      {samityList.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name} ({s.code})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="admArea">Working area / কর্মক্ষেত্র</Label>
+                    <select
+                      id="admArea"
+                      className="flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm"
+                      value={placement.workingAreaId}
+                      onChange={(e) => setPlacement((p) => ({ ...p, workingAreaId: e.target.value }))}
+                    >
+                      <option value="">— নির্বাচন —</option>
+                      {areaList.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.village}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
               )}

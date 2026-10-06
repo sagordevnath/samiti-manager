@@ -27,7 +27,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { api } from '@/lib/api';
+import { api, openFileInTab } from '@/lib/api';
 
 const TABS = ['generate', 'templates', 'documents', 'bulk'] as const;
 type Tab = (typeof TABS)[number];
@@ -68,7 +68,9 @@ function GenerateTab() {
     onSuccess: (doc) => setLast(doc),
   });
   const openPrint = (id: string) => {
-    window.open(`${import.meta.env.VITE_API_URL ?? '/api/v1'}/documents/${id}/download`, '_blank');
+    // Auth-gated endpoint: fetch with Bearer and open the Blob URL (a plain
+    // href would 401).
+    void openFileInTab(`/documents/${id}/download`).catch((e: Error) => window.alert(e.message));
   };
   const bnToday = banglaCalendarDate(new Date().toISOString().slice(0, 10)).text;
   const varFields: [string, string][] =
@@ -298,7 +300,7 @@ function DocumentsTab() {
                   <Td><span className={`rounded px-1.5 py-0.5 text-xs ${d.status === 'active' ? 'bg-teal-100 text-teal-800' : 'bg-red-100 text-red-800'}`}>{d.status === 'active' ? 'সক্রিয়' : 'বাতিল'}</span></Td>
                   <Td>
                     <div className="flex gap-1">
-                      <Button size="sm" variant="outline" className="h-7" onClick={() => window.open(`${import.meta.env.VITE_API_URL ?? '/api/v1'}/documents/${d.id}/download`, '_blank')}>খুলুন</Button>
+                      <Button size="sm" variant="outline" className="h-7" onClick={() => void openFileInTab(`/documents/${d.id}/download`).catch((e: Error) => window.alert(e.message))}>খুলুন</Button>
                       {d.status === 'active' && (
                         <Button size="sm" variant="ghost" className="h-7 text-red-700" onClick={() => revoke.mutate(d.id)} disabled={revoke.isPending}>বাতিল</Button>
                       )}
@@ -317,20 +319,26 @@ function DocumentsTab() {
 
 /* ── Tab 4: bulk jobs over a samity or branch (req 8) ─────────────────────── */
 
-const SAMITIES = [
-  { id: '00000000-0000-4000-8000-0000000000s1', name: 'গাজীপুর সমিতি' },
-  { id: '00000000-0000-4000-8000-0000000000s2', name: 'আশুলিয়া সমিতি' },
-];
-const BRANCHES = [
-  { id: '00000000-0000-4000-8000-0000000000b1', name: 'ঢাকা শাখা' },
-  { id: '00000000-0000-4000-8000-0000000000b2', name: 'ময়মনসিংহ শাখা' },
-];
+interface ScopeOption { id: string; name: string }
 
 function BulkTab() {
   const qc = useQueryClient();
   const [kind, setKind] = useState<BulkJob['kind']>('documents_batch');
   const [scope, setScope] = useState<'samity' | 'branch'>('samity');
-  const [scopeId, setScopeId] = useState(SAMITIES[0]!.id);
+  const [scopeId, setScopeId] = useState('');
+  // Real org scopes from the live API — the old demo constants were not valid
+  // UUIDs and would be rejected by Postgres.
+  const samities = useQuery({
+    queryKey: ['bulk-samities'],
+    queryFn: () => api.get<{ items: Array<{ id: string; name: string }> }>('/samities'),
+  });
+  const branches = useQuery({
+    queryKey: ['bulk-branches'],
+    queryFn: () => api.get<{ items: Array<{ id: string; name: string; name_bn: string | null }> }>('/org/branches'),
+  });
+  const samityOptions: ScopeOption[] = (samities.data?.items ?? []).map((s) => ({ id: s.id, name: s.name }));
+  const branchOptions: ScopeOption[] = (branches.data?.items ?? []).map((b) => ({ id: b.id, name: b.name_bn || b.name }));
+  const scopeOptions = scope === 'samity' ? samityOptions : branchOptions;
   const [body, setBody] = useState('সুপ্রিয় {name}, আগামীকাল সভায় উপস্থিত থাকার অনুরোধ।');
   const jobs = useQuery({
     queryKey: ['bulk-jobs'],
@@ -340,7 +348,7 @@ function BulkTab() {
   const create = useMutation({
     mutationFn: () =>
       api.post<BulkJob>('/documents/bulk-jobs', {
-        kind, scope, scopeId, scopeName: [...SAMITIES, ...BRANCHES].find((s) => s.id === scopeId)?.name ?? scopeId,
+        kind, scope, scopeId, scopeName: scopeOptions.find((s) => s.id === scopeId)?.name ?? scopeId,
         params: kind === 'documents_batch' ? { docKind: 'receipt', register: 'cholito', paidFor: 'সঞ্চয় জমা' } : { body },
       }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['bulk-jobs'] }),
@@ -350,7 +358,6 @@ function BulkTab() {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['bulk-jobs'] }),
   });
   const items = jobs.data?.items ?? [];
-  const scopeOptions = scope === 'samity' ? SAMITIES : BRANCHES;
   return (
     <div className="grid gap-4 lg:grid-cols-3">
       <Card>
@@ -365,7 +372,7 @@ function BulkTab() {
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1">
               <Label>পরিসর</Label>
-              <select className="w-full rounded-md border px-2 py-1.5 text-sm" value={scope} onChange={(e) => { const s = e.target.value as 'samity' | 'branch'; setScope(s); setScopeId(s === 'samity' ? SAMITIES[0]!.id : BRANCHES[0]!.id); }}>
+              <select className="w-full rounded-md border px-2 py-1.5 text-sm" value={scope} onChange={(e) => { setScope(e.target.value as 'samity' | 'branch'); setScopeId(''); }}>
                 <option value="samity">সমিতি</option>
                 <option value="branch">শাখা</option>
               </select>
@@ -373,10 +380,14 @@ function BulkTab() {
             <div className="space-y-1">
               <Label>টার্গেট</Label>
               <select className="w-full rounded-md border px-2 py-1.5 text-sm" value={scopeId} onChange={(e) => setScopeId(e.target.value)}>
+                <option value="">— বাছুন —</option>
                 {scopeOptions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </div>
           </div>
+          {(scope === 'samity' ? samities : branches).isError && (
+            <p className="text-xs text-red-600">তালিকা লোড হয়নি — আবার চেষ্টা করুন।</p>
+          )}
           {kind === 'sms_batch' && (
             <div className="space-y-1">
               <Label htmlFor="bulk-body">এসএমএস ({'{name}'} বসান)</Label>
@@ -384,7 +395,7 @@ function BulkTab() {
             </div>
           )}
           {create.isError && <p className="text-xs text-red-600">{(create.error as Error).message}</p>}
-          <Button className="w-full" disabled={create.isPending} onClick={() => create.mutate()}>সারি (Queue) তে পাঠান</Button>
+          <Button className="w-full" disabled={create.isPending || !scopeId} onClick={() => create.mutate()}>সারি (Queue) তে পাঠান</Button>
           <p className="text-xs text-muted-foreground">কাজ Express ওয়ার্কারে স্বয়ংক্রিয়ভাবে চলে; এখানে টিক দিয়ে সাথে সাথেও চালানো যায়।</p>
         </CardContent>
       </Card>

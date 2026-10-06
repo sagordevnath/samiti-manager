@@ -31,6 +31,13 @@ export const samityCreateSchema = z.object({
 });
 export type SamityCreateInput = z.infer<typeof samityCreateSchema>;
 
+/** Partial update: at least one field must be present. */
+export const samityUpdateSchema = samityCreateSchema
+  .partial()
+  .refine((v) => Object.values(v).some((x) => x !== undefined), {
+    message: 'অন্তত একটি ফিল্ড দিন / Provide at least one field',
+  });
+export type SamityUpdateInput = z.infer<typeof samityUpdateSchema>;
 export const groupCreateSchema = z.object({
   samityId: uuidSchema,
   name: z.string().trim().min(2).max(80),

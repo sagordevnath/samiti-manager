@@ -4,11 +4,52 @@ import { ArrowLeft, Loader2, Printer, Share2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useMoneyFormatter } from '@/lib/digits';
 import { getOutboxEntry, type OutboxEntry } from '@/lib/offline';
+import { api } from '@/lib/api';
+
+/** Server-side receipt shape (GET /collection/entries/:idempotencyKey/receipt).
+ *  Both routers reply { entry: CollectionReceipt } — same as the post/sync response. */
+interface ServerReceiptEntry {
+  idempotencyKey: string;
+  meetingDate: string;
+  createdAt: string;
+  memberName: string;
+  receiptNo: string;
+  allocation: {
+    overdueApplied: Array<{ installmentId: string; seq: number; amount: string }>;
+    currentApplied: { installmentId: string; seq: number; amount: string } | null;
+    savingsApplied: string;
+    advanceApplied: string;
+  };
+}
+interface ServerReceiptResponse {
+  entry: ServerReceiptEntry;
+}
+
+/** Map a server receipt onto the outbox-entry shape the page renders. */
+function fromServerResponse(res: ServerReceiptResponse): OutboxEntry {
+  const e = res.entry;
+  const loanApplied =
+    e.allocation.overdueApplied.reduce((s, o) => s + Number(o.amount), 0) +
+    Number(e.allocation.currentApplied?.amount ?? 0);
+  return {
+    idempotencyKey: e.idempotencyKey,
+    memberId: '',
+    meetingDate: e.meetingDate,
+    loanPaid: loanApplied.toFixed(2),
+    savingsPaid: Number(e.allocation.savingsApplied).toFixed(2),
+    extraPaid: Number(e.allocation.advanceApplied).toFixed(2),
+    capturedAt: e.createdAt,
+    status: 'posted',
+    receiptNo: e.receiptNo,
+    memberName: e.memberName,
+  };
+}
 
 /**
  * Printable / WhatsApp-shareable collection receipt (requirement 3).
- * Reads the stored outbox entry (offline-safe); the passbook line is the
- * allocation breakdown, mirroring what the server wrote to the passbooks.
+ * Offline-first: reads the stored outbox entry; when the entry was captured
+ * on another device (or the outbox was cleared) it falls back to the server's
+ * idempotent receipt lookup so re-print / WhatsApp share always works.
  */
 export function ReceiptPage() {
   const { idempotencyKey } = useParams<{ idempotencyKey: string }>();
@@ -17,10 +58,29 @@ export function ReceiptPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    void getOutboxEntry(idempotencyKey ?? '').then((e) => {
-      setEntry(e);
-      setLoading(false);
-    });
+    let cancelled = false;
+    const key = idempotencyKey ?? '';
+    void (async () => {
+      const local = await getOutboxEntry(key);
+      if (cancelled) return;
+      if (local) {
+        setEntry(local);
+        setLoading(false);
+        return;
+      }
+      try {
+        const res = await api.get<ServerReceiptResponse>(`/collection/entries/${encodeURIComponent(key)}/receipt`);
+        if (cancelled) return;
+        setEntry(fromServerResponse(res));
+      } catch {
+        if (!cancelled) setEntry(null);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [idempotencyKey]);
 
   if (loading) {

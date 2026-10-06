@@ -1,6 +1,18 @@
 import { Router } from 'express';
-import { memberCreateSchema, paginationQuerySchema } from '@samity/shared';
-import { NotFound } from '../lib/errors.js';
+import {
+  admissionCreateSchema,
+  checkDuplicateMembership,
+  duplicateCheckQuerySchema,
+  memberCreateSchema,
+  memberUpdateSchema,
+  paginationQuerySchema,
+  type AdmissionCreateInput,
+  type AdmissionStage,
+  type AdmissionView,
+  type DuplicateCheckResult,
+  type MemberLifecycle,
+} from '@samity/shared';
+import { Conflict, NotFound } from '../lib/errors.js';
 import { requireAuth, requirePermission, type RequestWithAuth } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/error.js';
 import { validate } from '../middleware/validate.js';
@@ -25,15 +37,35 @@ membersRouter.get(
     const { page, pageSize } = req.query as unknown as { page: number; pageSize: number };
     const branchId = (req.query as Record<string, unknown>).branchId;
 
+    const q = (req.query as Record<string, unknown>).q;
+    const status = (req.query as Record<string, unknown>).status;
+
+    // NOTE: `members` has samity_id / member_code / lifecycle — there is no
+    // samity_name column (that exists only on member_attendance); samity and
+    // branch display names come from the FK embeds below.
     let query = supabaseAdmin
       .from('members')
-      .select('id, org_id, branch_id, full_name, phone, samity_name, national_id, status, created_at', { count: 'exact' })
+      .select(
+        'id, org_id, branch_id, samity_id, member_code, full_name, phone, national_id, status, lifecycle, created_at, samities(name), branches(code)',
+        { count: 'exact' },
+      )
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
       .range((page - 1) * pageSize, page * pageSize - 1);
 
     if (typeof branchId === 'string' && branchId) {
       query = query.eq('branch_id', branchId);
+    }
+    // Free-text search over name / member number / phone (parity with demo router).
+    if (typeof q === 'string' && q.trim()) {
+      const needle = q.trim().replace(/[,()%\\]/g, '');
+      if (needle) {
+        query = query.or(`full_name.ilike.%${needle}%,member_code.ilike.%${needle}%,phone.ilike.%${needle}%`);
+      }
+    }
+    // Lifecycle is authoritative since migration 0005.
+    if (typeof status === 'string' && status) {
+      query = query.eq('lifecycle', status);
     }
     // Non-super users are scoped to their own org.
     const auth = (req as RequestWithAuth).auth;
@@ -55,7 +87,7 @@ membersRouter.post(
   validate(memberCreateSchema),
   asyncHandler(async (req, res) => {
     const auth = (req as RequestWithAuth).auth!;
-    const body = req.body as { fullName: string; phone: string; branchId: string; samityName?: string; nationalId?: string };
+    const body = req.body as { fullName: string; phone: string; branchId: string; samityId?: string; nationalId?: string };
 
     const { data, error } = await supabaseAdmin
       .from('members')
@@ -64,7 +96,7 @@ membersRouter.post(
         branch_id: body.branchId,
         full_name: body.fullName,
         phone: body.phone,
-        samity_name: body.samityName ?? null,
+        samity_id: body.samityId ?? null,
         national_id: body.nationalId ?? null,
         status: 'active',
         created_by: auth.userId,
@@ -74,6 +106,250 @@ membersRouter.post(
 
     if (error) throw error;
     res.status(201).json({ member: data });
+  }),
+);
+
+// ── Admission wizard (live) ──────────────────────────────────────────────────
+// Registered before GET /:id so 'duplicate-check' / 'admissions' are never
+// captured by the id route.
+
+/** Institution-wide duplicate screening against the real members table. */
+async function screenDuplicates(
+  auth: { orgId: string | null; role: string },
+  input: { fullName?: string; mobile?: string; idNumber?: string; workingAreaId?: string },
+  branchId?: string,
+): Promise<DuplicateCheckResult> {
+  const needles: string[] = [];
+  if (input.idNumber) needles.push(`national_id.eq.${input.idNumber}`);
+  if (input.mobile) {
+    const normalized = input.mobile.replace(/\D/g, '').replace(/^88/, '');
+    needles.push(`phone.eq.${normalized}`);
+  }
+  if (input.fullName && input.fullName.trim()) {
+    const safe = input.fullName.trim().replace(/[,()%\\]/g, '');
+    if (safe) needles.push(`full_name.ilike.%${safe}%`);
+  }
+  if (needles.length === 0) return { matches: [], blocked: false, overlapRisk: false };
+
+  let query = supabaseAdmin
+    .from('members')
+    .select(
+      'id, member_code, full_name, phone, national_id, working_area_id, address, branch_id, lifecycle, branches(code)',
+    )
+    .is('deleted_at', null)
+    .or(needles.join(','))
+    .limit(200);
+  if (auth.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
+
+  const { data, error } = await query;
+  if (error) throw error;
+
+  type DupRow = {
+    id: string;
+    member_code: string | null;
+    full_name: string;
+    phone: string;
+    national_id: string | null;
+    working_area_id: string | null;
+    address: string | null;
+    branch_id: string;
+    lifecycle: string;
+    branches: { code: string } | { code: string }[] | null;
+  };
+  return checkDuplicateMembership(
+    {
+      fullName: input.fullName,
+      mobile: input.mobile,
+      idNumber: input.idNumber,
+      workingAreaId: input.workingAreaId,
+      branchId,
+    },
+    ((data ?? []) as unknown as DupRow[]).map((m) => ({
+      memberId: m.id,
+      memberNumber: m.member_code ?? '',
+      fullName: m.full_name,
+      phone: m.phone,
+      idNumber: m.national_id,
+      workingAreaId: m.working_area_id,
+      address: m.address,
+      branchId: m.branch_id,
+      branchCode: (Array.isArray(m.branches) ? m.branches[0]?.code : m.branches?.code) ?? '',
+      status: m.lifecycle as MemberLifecycle,
+    })),
+  );
+}
+
+/** GET /api/v1/members/duplicate-check — NID/mobile/name screening (wizard step 2). */
+membersRouter.get(
+  '/duplicate-check',
+  requirePermission('member:write'),
+  validate(duplicateCheckQuerySchema, 'query'),
+  asyncHandler(async (req, res) => {
+    const auth = (req as RequestWithAuth).auth;
+    const q = req.query as unknown as {
+      idNumber?: string;
+      mobile?: string;
+      fullName?: string;
+      workingAreaId?: string;
+      branchId?: string;
+    };
+    res.json(await screenDuplicates(auth ?? { orgId: null, role: 'member' }, q, q.branchId));
+  }),
+);
+
+/** GET /api/v1/members/admissions — recent admission records. */
+membersRouter.get(
+  '/admissions',
+  requirePermission('member:read'),
+  asyncHandler(async (req, res) => {
+    const auth = (req as RequestWithAuth).auth;
+    let query = supabaseAdmin
+      .from('member_admissions')
+      .select('*')
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (auth?.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json({ items: data ?? [] });
+  }),
+);
+
+/**
+ * POST /api/v1/members/admissions — completion of the admission wizard.
+ * Creates the real member row (member number + passbook number), the
+ * member_admissions audit row and nominee records, then returns the
+ * AdmissionView the web wizard expects. Members section and Dashboard pick the
+ * new member up automatically through their existing queries.
+ */
+membersRouter.post(
+  '/admissions',
+  requirePermission('member:write'),
+  validate(admissionCreateSchema),
+  asyncHandler(async (req, res) => {
+    const auth = (req as RequestWithAuth).auth!;
+    const body = req.body as AdmissionCreateInput;
+    const draft = body.draft;
+
+    // 1) Institution-wide duplicate screening — hard duplicates are blocked.
+    const duplicates = await screenDuplicates(
+      { orgId: auth.orgId, role: auth.role },
+      { fullName: draft.fullName, mobile: draft.mobile, idNumber: draft.idNumber, workingAreaId: draft.workingAreaId },
+      body.branchId,
+    );
+    if (duplicates.blocked) throw Conflict('দ্বৈত সদস্যপদ নিষিদ্ধ / Duplicate membership blocked');
+
+    // 2) Resolve the samity by name within the branch (optional link).
+    const { data: samity } = await supabaseAdmin
+      .from('samities')
+      .select('id')
+      .eq('branch_id', body.branchId)
+      .eq('name', draft.samityName)
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    // 3) Branch code for the response view.
+    const { data: branch } = await supabaseAdmin.from('branches').select('code').eq('id', body.branchId).maybeSingle();
+
+    // 4) Member number + passbook number (org-wide yearly sequence).
+    const year = new Date().getFullYear();
+    const { count } = await supabaseAdmin.from('members').select('id', { count: 'exact', head: true });
+    const pad = (n: number) => String(n).padStart(4, '0');
+    let seq = (count ?? 0) + 1;
+    let memberCode = `MEM-${year}-${pad(seq)}`;
+    for (let attempt = 0; attempt < 25; attempt += 1) {
+      const { data: exists } = await supabaseAdmin.from('members').select('id').eq('member_code', memberCode).maybeSingle();
+      if (!exists) break;
+      seq += 1;
+      memberCode = `MEM-${year}-${pad(seq)}`;
+    }
+    const passbookNo = `PB-${year}-${pad(seq)}`;
+
+    // 5) Create the member.
+    const { data: member, error: memberError } = await supabaseAdmin
+      .from('members')
+      .insert({
+        org_id: auth.orgId,
+        branch_id: body.branchId,
+        samity_id: samity?.id ?? null,
+        member_code: memberCode,
+        passbook_no: passbookNo,
+        full_name: draft.fullName,
+        full_name_bn: draft.fullNameBn,
+        father_or_husband_name: draft.fatherOrHusbandName,
+        mother_name: draft.motherName,
+        phone: draft.mobile,
+        national_id: draft.idNumber,
+        dob: draft.dob,
+        address: draft.address,
+        working_area_id: draft.workingAreaId,
+        occupation: draft.occupation,
+        monthly_household_income: draft.monthlyHouseholdIncome,
+        land_owned_decimals: draft.landOwnedDecimals,
+        family_members: draft.familyMembers,
+        photo_path: draft.photoPath ?? null,
+        signature_path: draft.signaturePath ?? null,
+        status: 'active',
+        lifecycle: 'active',
+        join_date: new Date().toISOString().slice(0, 10),
+        created_by: auth.userId,
+      })
+      .select('id')
+      .single();
+    if (memberError || !member) throw memberError ?? new Error('member insert failed');
+
+    // 6) Admission audit row with the wizard's stage history.
+    const now = new Date().toISOString();
+    const stageHistory: AdmissionView['stageHistory'] = [
+      { stage: 'member_issued' as AdmissionStage, result: 'pass' as const, at: now, by: auth.userId },
+    ];
+    const { data: admission, error: admissionError } = await supabaseAdmin
+      .from('member_admissions')
+      .insert({
+        org_id: auth.orgId,
+        branch_id: body.branchId,
+        draft,
+        stage: 'passbook_generated',
+        stage_history: stageHistory,
+        member_number: memberCode,
+        passbook_no: passbookNo,
+        member_id: member.id,
+        created_by: auth.userId,
+      })
+      .select('id')
+      .single();
+    if (admissionError || !admission) throw admissionError ?? new Error('admission insert failed');
+
+    // 7) Nominees.
+    if (draft.nominees.length > 0) {
+      const { error: nomineesError } = await supabaseAdmin.from('member_nominees').insert(
+        draft.nominees.map((n) => ({
+          org_id: auth.orgId,
+          member_id: member.id,
+          name: n.name,
+          relation: n.relation,
+          share_pct: n.sharePct,
+          created_by: auth.userId,
+        })),
+      );
+      if (nomineesError) throw nomineesError;
+    }
+
+    const view: AdmissionView = {
+      id: admission.id,
+      branchId: body.branchId,
+      branchCode: branch?.code ?? '',
+      stage: 'passbook_generated',
+      stageHistory,
+      draft,
+      duplicates,
+      eligibility: null,
+      memberNumber: memberCode,
+      passbookNo,
+      status: 'active',
+    };
+    res.status(201).json({ admission: view });
   }),
 );
 
@@ -94,18 +370,62 @@ membersRouter.get(
   }),
 );
 
+/** PATCH /api/v1/members/:id — partial update of contact / assignment fields. */
+membersRouter.patch(
+  '/:id',
+  requirePermission('member:write'),
+  validate(memberUpdateSchema),
+  asyncHandler(async (req, res) => {
+    const auth = (req as RequestWithAuth).auth!;
+    const body = req.body as {
+      fullName?: string;
+      phone?: string;
+      branchId?: string;
+      samityId?: string;
+      nationalId?: string;
+    };
+
+    const patch: Record<string, unknown> = {};
+    if (body.fullName !== undefined) patch['full_name'] = body.fullName;
+    if (body.phone !== undefined) patch['phone'] = body.phone;
+    if (body.branchId !== undefined) patch['branch_id'] = body.branchId;
+    if (body.samityId !== undefined) patch['samity_id'] = body.samityId;
+    if (body.nationalId !== undefined) patch['national_id'] = body.nationalId;
+
+    let query = supabaseAdmin
+      .from('members')
+      .update(patch)
+      .eq('id', req.params['id'] as string)
+      .is('deleted_at', null);
+    // Non-super users may only update rows inside their own org.
+    if (auth.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
+
+    const { data, error } = await query
+      .select(
+        'id, org_id, branch_id, samity_id, member_code, full_name, phone, national_id, status, lifecycle, created_at, samities(name), branches(code)',
+      )
+      .single();
+
+    if (error || !data) throw NotFound('সদস্য পাওয়া যায়নি / Member not found');
+    res.json({ member: data });
+  }),
+);
+
 /** DELETE /api/v1/members/:id — soft delete only (sets deleted_at). */
 membersRouter.delete(
   '/:id',
   requirePermission('member:write'),
   asyncHandler(async (req, res) => {
     const auth = (req as RequestWithAuth).auth!;
-    const { error } = await supabaseAdmin
+    // `members` has no deleted_by column — soft delete is deleted_at only.
+    let query = supabaseAdmin
       .from('members')
-      .update({ deleted_at: new Date().toISOString(), deleted_by: auth.userId })
+      .update({ deleted_at: new Date().toISOString() })
       .eq('id', req.params['id'] as string)
       .is('deleted_at', null);
+    if (auth.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
 
+    const { error } = await query;
     if (error) throw error;
     res.status(204).send();
   }),

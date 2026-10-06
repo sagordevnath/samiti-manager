@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { LogOut, Menu } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { LogOut } from 'lucide-react';
 import { useAuthStore, ensureDemoSession } from '@/stores/auth';
 import { useUiStore, type ThemePreference } from '@/stores/ui';
 import { useQueryClient } from '@tanstack/react-query';
@@ -9,8 +8,8 @@ import { cn } from '@/lib/utils';
 
 const THEME_OPTIONS: ThemePreference[] = ['light', 'dark', 'system'];
 
-/** Fixed glass topbar: hamburger, brand, digit/language toggles, theme, user menu. */
-export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
+/** Fixed glass topbar: brand, digit/language toggles, theme, user menu. */
+export function Topbar() {
   const { t, i18n } = useTranslation();
   const asciiDigits = useUiStore((s) => s.asciiDigits);
   const toggleDigits = useUiStore((s) => s.toggleDigits);
@@ -72,10 +71,6 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
 
   return (
     <header className="glass glass-edge fixed inset-x-0 top-0 z-50 flex h-14 items-center gap-1.5 border-b px-3 sm:px-4">
-      <Button variant="ghost" size="icon" className="lg:hidden" onClick={onMenuClick} aria-label={t('common.menu')}>
-        <Menu className="h-5 w-5" />
-      </Button>
-
       <div className="flex min-w-0 items-baseline gap-2">
         <span className="text-aurora truncate text-base font-extrabold tracking-tight">{t('app.name')}</span>
         <span className="hidden text-xs text-muted-foreground md:inline">· {t('app.tagline')}</span>

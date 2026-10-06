@@ -209,7 +209,7 @@ export function Member360Page() {
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
             {can('member:write') && (
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="নতুন নোট লিখুন…" />
                 <Button size="sm" onClick={addNote}>
                   যোগ করুন
@@ -314,7 +314,7 @@ function StatusChangePanel({ memberId, current, onDone }: { memberId: string; cu
           </div>
         </div>
         {error && <p className="rounded-md bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button size="sm" onClick={submit} disabled={busy}>
             পরিবর্তন করুন
           </Button>

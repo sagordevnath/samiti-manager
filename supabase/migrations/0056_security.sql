@@ -91,6 +91,10 @@ end;
 $$ language plpgsql security definer;
 
 -- Attach to the sensitive tables (re-runnable: drop/recreate per table).
+-- Tables are checked with to_regclass so a partial earlier migration chain
+-- degrades audit coverage gracefully instead of aborting the whole file —
+-- the security module must never fail to install because one unrelated
+-- table is missing.
 do $$
 declare t text;
 begin
@@ -100,10 +104,12 @@ begin
     'collection_entries','cash_handovers','vouchers','voucher_lines',
     'payroll_lines','hr_staff','users_profile'
   ] loop
-    execute format('drop trigger if exists trg_audit_%s on %I', t, t);
-    execute format(
-      'create trigger trg_audit_%s after insert or update or delete on %I
-         for each row execute function audit_row_change()', t, t);
+    if to_regclass(format('%I', t)) is not null then
+      execute format('drop trigger if exists trg_audit_%s on %I', t, t);
+      execute format(
+        'create trigger trg_audit_%s after insert or update or delete on %I
+           for each row execute function audit_row_change()', t, t);
+    end if;
   end loop;
 end;
 $$;

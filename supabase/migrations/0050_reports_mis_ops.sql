@@ -125,6 +125,38 @@ create table if not exists month_freezes (
 );
 
 -- ── 8) Materialized views (nightly refresh, req 8) ──────────────────────────
+-- loans_classified shim: normalizes the live loan tables into the per-loan
+-- snapshot shape the MIS matviews expect (the classifier table `0050` was
+-- modelled on never landed). One row per application with outstanding =
+-- principal+interest demand minus payments; DPD from the oldest unpaid due.
+create or replace view loans_classified as
+select
+  ld.application_id,
+  ld.org_id,
+  ld.branch_id,
+  ld.samity_id,
+  ld.disbursed_by                        as officer_id,
+  coalesce(u.full_name, 'Unassigned')    as officer_name,
+  la.member_id                           as member_id,
+  m.full_name                            as member_name,
+  coalesce(sum(li.principal + li.interest), 0)::numeric(14,2) as demand_total,
+  coalesce(sum(li.paid_amount), 0)::numeric(14,2)             as paid_total,
+  greatest(
+    coalesce(sum(li.principal + li.interest), 0) - coalesce(sum(li.paid_amount), 0),
+    0
+  )::numeric(14,2)                       as outstanding,
+  coalesce(sum(case when li.due_date < current_date then (li.principal + li.interest - li.paid_amount) end), 0)::numeric(14,2) as overdue_total,
+  coalesce(min(case when li.paid_amount < li.principal + li.interest then li.due_date end), current_date) - current_date as days_past_due
+from loan_disbursements ld
+join loan_applications la on la.id = ld.application_id
+join members m on m.id = la.member_id
+left join users_profile u on u.id = ld.disbursed_by
+left join loan_installments li on li.application_id = ld.application_id
+where ld.status = 'completed'
+  and ld.cancelled_at is null
+  and la.status in ('disbursed','closed')
+group by ld.application_id, ld.org_id, ld.branch_id, ld.samity_id, ld.disbursed_by, u.full_name, m.full_name, la.member_id;
+
 -- Branch portfolio: outstanding, loans, PAR30 per branch per day.
 create materialized view if not exists mv_branch_portfolio_daily as
 select

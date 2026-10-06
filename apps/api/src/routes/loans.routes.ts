@@ -119,7 +119,7 @@ loansRouter.get(
   requirePermission('loan:read'),
   asyncHandler(async (req, res) => {
     const auth = (req as RequestWithAuth).auth!;
-    let query = supabaseAdmin.from('loan_products').select('*').is('deleted_at', null).order('code');
+    let query = supabaseAdmin.from('loan_products').select('*').order('code');
     if (auth.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
     const { data, error } = await query;
     if (error) throw error;
@@ -188,7 +188,7 @@ loansRouter.get(
   requirePermission('loan:read'),
   asyncHandler(async (req, res) => {
     const auth = (req as RequestWithAuth).auth!;
-    let query = supabaseAdmin.from('loan_applications').select('*').is('deleted_at', null).order('created_at', { ascending: false });
+    let query = supabaseAdmin.from('loan_applications').select('*').order('created_at', { ascending: false });
     if (auth.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
     if (auth.branchId && ['branch_manager', 'account_officer'].includes(auth.role)) {
       query = query.eq('branch_id', auth.branchId);
@@ -219,7 +219,6 @@ loansRouter.post(
       .from('loan_products')
       .select('id, org_id, min_amount, max_amount, term_months, is_active')
       .eq('id', body.productId)
-      .is('deleted_at', null)
       .single();
     if (productError || !product) throw NotFound('Loan product not found');
     if (!product.is_active) throw Conflict('Loan product is inactive');
@@ -234,7 +233,6 @@ loansRouter.post(
       .select('id', { count: 'exact', head: true })
       .eq('member_id', body.memberId)
       .not('status', 'in', '(rejected,closed)')
-      .is('deleted_at', null);
     if (countError) throw countError;
     const { data: policy } = await supabaseAdmin
       .from('loan_policies')
@@ -285,7 +283,6 @@ loansRouter.get(
       .from('loan_applications')
       .select('*, loan_application_steps(*)')
       .eq('id', req.params['id'])
-      .is('deleted_at', null)
       .single();
     if (error || !data) throw NotFound('Loan application not found');
     res.json(data);
@@ -304,7 +301,6 @@ loansRouter.post(
       .from('loan_applications')
       .select('id, org_id, status, requested_amount, branch_id')
       .eq('id', req.params['id'])
-      .is('deleted_at', null)
       .single();
     if (appError || !app) throw NotFound('Loan application not found');
     if (['approved', 'rejected', 'disbursed', 'closed'].includes(app.status)) {
@@ -403,7 +399,6 @@ loansRouter.post(
       .from('loan_applications')
       .select('id, org_id, status, requested_amount, branch_id, member_id, product_id')
       .eq('id', req.params['id'])
-      .is('deleted_at', null)
       .single();
     if (appError || !app) throw NotFound('Loan application not found');
     if (!['bm_review', 'am_review'].includes(app.status)) {
@@ -463,7 +458,6 @@ loansRouter.get(
       .from('loan_applications')
       .select('requested_amount, term_months, loan_products(interest_rate, interest_method, installment_frequency, grace_period_installments)')
       .eq('id', req.params['id'])
-      .is('deleted_at', null)
       .single();
     if (appError || !app) throw NotFound('Loan application not found');
     const product = app.loan_products as unknown as {
@@ -493,7 +487,7 @@ loansRouter.get(
   requirePermission('loan:read'),
   asyncHandler(async (req, res) => {
     const auth = (req as RequestWithAuth).auth!;
-    let query = supabaseAdmin.from('loan_applications').select('status, requested_amount').is('deleted_at', null);
+    let query = supabaseAdmin.from('loan_applications').select('status, requested_amount');
     if (auth.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
     const { data, error } = await query;
     if (error) throw error;
@@ -526,7 +520,6 @@ loansRouter.get(
       .from('loan_applications')
       .select('id, application_number, org_id, branch_id, member_id, requested_amount, product_id, decided_at')
       .eq('status', 'approved')
-      .is('deleted_at', null);
     if (auth.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
     if (auth.branchId && ['branch_manager', 'account_officer'].includes(auth.role)) {
       query = query.eq('branch_id', auth.branchId);
@@ -585,7 +578,6 @@ loansRouter.get(
       .from('loan_applications')
       .select('id, status, requested_amount')
       .eq('id', applicationId)
-      .is('deleted_at', null)
       .maybeSingle();
     if (!app) throw NotFound('Loan application not found');
     const { data: rec } = await supabaseAdmin
@@ -608,7 +600,6 @@ loansRouter.patch(
       .from('loan_applications')
       .select('id, org_id, branch_id, status')
       .eq('id', applicationId)
-      .is('deleted_at', null)
       .maybeSingle();
     if (!app) throw NotFound('Loan application not found');
     if (app.status !== 'approved') {
@@ -668,7 +659,6 @@ loansRouter.post(
       .from('loan_applications')
       .select('id, org_id, branch_id, status, requested_amount, product_id, term_months')
       .eq('id', applicationId)
-      .is('deleted_at', null)
       .maybeSingle();
     if (!app) throw NotFound('Loan application not found');
     if (app.status !== 'approved') {

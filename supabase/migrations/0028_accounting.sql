@@ -16,7 +16,9 @@ create table if not exists gl_accounts (
   name_bn     text not null,
   type        text not null check (type in ('asset','liability','fund','income','expense')),
   category    text not null check (category in ('control','cash','bank','income','expense','party','member','memo')),
-  parent_code varchar(4) references gl_accounts(code),
+  -- self-FK added below via alter table: an inline `references gl_accounts(code)`
+  -- cannot be validated until the unique index on code exists (42830).
+  parent_code varchar(4),
   is_active   boolean not null default true,
   created_by  uuid references auth.users(id),
   created_at  timestamptz not null default now(),
@@ -24,6 +26,17 @@ create table if not exists gl_accounts (
   deleted_at  timestamptz,
   unique (org_id, code)
 );
+
+-- Several child tables below reference gl_accounts(code) directly. Code is a
+-- 4-char per-org code, so give it a global unique index to make those FKs
+-- valid (single-org deployments — this app's model — are unaffected).
+create unique index if not exists gl_accounts_code_key on gl_accounts (code);
+
+-- Now that the unique index exists, attach the parent self-reference.
+alter table gl_accounts drop constraint if exists gl_accounts_parent_code_fkey;
+alter table gl_accounts
+  add constraint gl_accounts_parent_code_fkey
+  foreign key (parent_code) references gl_accounts(code);
 
 -- ── 2) Vouchers ─────────────────────────────────────────────────────────────
 create table if not exists vouchers (

@@ -99,7 +99,7 @@ export function newVerifyCode(): string {
 }
 
 /** The absolute URL the QR points at (web route /verify/:code). */
-function publicBaseUrl(): string {
+export function publicBaseUrl(): string {
   return process.env['PUBLIC_BASE_URL'] ?? 'http://localhost:5174';
 }
 

@@ -127,7 +127,7 @@ export function SavingsPage() {
         <h1 className="text-xl font-bold">Savings</h1>
         <p className="text-sm text-muted-foreground">Configure products and open one account per member per product.</p>
       </div>
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Button variant={section === 'products' ? 'default' : 'outline'} onClick={() => setSection('products')}>Products</Button>
         <Button variant={section === 'accounts' ? 'default' : 'outline'} onClick={() => setSection('accounts')}>Accounts</Button>
         <Button variant={section === 'transactions' ? 'default' : 'outline'} onClick={() => setSection('transactions')}>Transactions</Button>

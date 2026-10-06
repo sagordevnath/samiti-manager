@@ -328,7 +328,7 @@ export function ProgramsOpsPage() {
                 <CardHeader className="pb-2">
                   <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-base">
                     <span className="flex items-center gap-2"><AlertTriangle className="h-4 w-4" /> বাজেট নিরীক্ষা (৮০% সতর্কতা)</span>
-                    <div className="flex items-end gap-2">
+                    <div className="flex flex-wrap items-end gap-2">
                       <div className="space-y-1">
                         <Label htmlFor="bs-project">প্রকল্প</Label>
                         <select

@@ -1,3 +1,5 @@
+import { createPublicKey } from 'node:crypto';
+import type { JsonWebKey } from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { hasPermission, permissionsForRole, ROLES, type AuthUser, type Permission, type Role } from '@samity/shared';
@@ -10,10 +12,66 @@ export interface RequestWithAuth extends Request {
   auth?: AuthUser;
 }
 
+interface TokenPayload {
+  sub: string;
+  email?: string;
+  role?: string;
+  org_id?: string | null;
+  branch_id?: string | null;
+  app_permissions?: Permission[];
+  locale?: string;
+  /** Real Supabase access tokens nest custom claims here. */
+  app_metadata?: Record<string, unknown>;
+}
+
+interface JwksKey extends JsonWebKey {
+  kid?: string;
+  alg?: string;
+}
+
+/** Short-lived cache of the project's asymmetric signing keys (10 minutes). */
+let jwksCache: { keys: JwksKey[]; at: number } | null = null;
+
+async function fetchJwks(): Promise<JwksKey[]> {
+  if (jwksCache && Date.now() - jwksCache.at < 600_000) return jwksCache.keys;
+  const base = env.SUPABASE_URL ?? '';
+  if (!base || base.includes('placeholder')) throw new Error('no supabase url');
+  const res = await fetch(`${base}/auth/v1/.well-known/jwks.json`);
+  if (!res.ok) throw new Error(`jwks fetch failed: ${res.status}`);
+  const body = (await res.json()) as { keys?: JwksKey[] };
+  if (!body.keys?.length) throw new Error('jwks empty');
+  jwksCache = { keys: body.keys, at: Date.now() };
+  return body.keys;
+}
+
+function attachAuth(req: RequestWithAuth, payload: TokenPayload): void {
+  // Custom claims may sit top-level (API-minted tokens) or inside app_metadata
+  // (tokens issued by Supabase Auth for real logins).
+  const meta = payload.app_metadata ?? {};
+  const roleClaim = payload.role && ROLES.includes(payload.role as Role) ? payload.role : (meta['role'] as string | undefined);
+  const role: Role = ROLES.includes(roleClaim as Role) ? (roleClaim as Role) : 'member';
+  const metaPermissions = Array.isArray(meta['app_permissions']) ? (meta['app_permissions'] as Permission[]) : undefined;
+
+  req.auth = {
+    userId: payload.sub,
+    email: payload.email ?? '',
+    role,
+    orgId: payload.org_id ?? (meta['org_id'] as string | undefined) ?? null,
+    branchId: payload.branch_id ?? (meta['branch_id'] as string | undefined) ?? null,
+    permissions: payload.app_permissions ?? metaPermissions ?? permissionsForRole(role),
+    locale: payload.locale === 'en' ? 'en' : 'bn',
+  };
+}
+
 /**
  * Verify the Supabase JWT and attach an AuthUser to the request.
  * Role/permissions come from custom claims (`app_metadata` in Supabase);
  * fall back to the role's default permission set if claims are absent.
+ *
+ * Two verification paths:
+ *  1. HS256 with the legacy project JWT secret (projects on legacy keys).
+ *  2. JWKS lookup against the project's asymmetric signing keys — required
+ *     once Supabase rotates a project onto the new JWT signing keys.
  */
 export function requireAuth(req: RequestWithAuth, _res: Response, next: NextFunction): void {
   const header = req.headers.authorization;
@@ -37,31 +95,34 @@ export function requireAuth(req: RequestWithAuth, _res: Response, next: NextFunc
   }
 
   try {
-    const payload = jwt.verify(token, env.SUPABASE_JWT_SECRET) as {
-      sub: string;
-      email?: string;
-      role?: string;
-      org_id?: string | null;
-      branch_id?: string | null;
-      app_permissions?: Permission[];
-      locale?: string;
-    };
-
-    const role: Role = ROLES.includes(payload.role as Role) ? (payload.role as Role) : 'member';
-
-    req.auth = {
-      userId: payload.sub,
-      email: payload.email ?? '',
-      role,
-      orgId: payload.org_id ?? null,
-      branchId: payload.branch_id ?? null,
-      permissions: payload.app_permissions ?? permissionsForRole(role),
-      locale: payload.locale === 'en' ? 'en' : 'bn',
-    };
+    const payload = jwt.verify(token, env.SUPABASE_JWT_SECRET) as unknown as TokenPayload;
+    attachAuth(req, payload);
     next();
+    return;
   } catch {
-    next(Unauthorized('Invalid or expired token'));
+    // Fall through to the JWKS path (asymmetric signing keys).
   }
+
+  // Asymmetric-key path: look the token's `kid` up in the project JWKS.
+  void (async () => {
+    try {
+      const [, rawPayload, , rawHeader] = token.split('.');
+      if (!rawHeader || !rawPayload) throw new Error('malformed token');
+      const header = JSON.parse(Buffer.from(rawHeader, 'base64url').toString('utf8')) as { kid?: string; alg?: string };
+      const keys = await fetchJwks();
+      const jwk = keys.find((k) => k.kid === header.kid) ?? keys[0];
+      if (!jwk) throw new Error('no matching signing key');
+      const key = createPublicKey({ key: jwk as JsonWebKey, format: 'jwk' });
+      const payload = jwt.verify(token, key, {
+        algorithms: [(header.alg ?? 'ES256') as jwt.Algorithm],
+      }) as unknown as TokenPayload;
+      attachAuth(req, payload);
+      next();
+    } catch (err) {
+      logger.debug({ err: String(err) }, 'token verification failed on both paths');
+      next(Unauthorized('Invalid or expired token'));
+    }
+  })();
 }
 
 /** Gate a route behind one or more permissions (any-of). */
