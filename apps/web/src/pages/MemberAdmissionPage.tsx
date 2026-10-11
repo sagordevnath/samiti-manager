@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import { AlertTriangle, Ban, CheckCircle2, ChevronLeft, ChevronRight, Loader2, ShieldCheck, UserRoundCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -120,6 +121,7 @@ export function MemberAdmissionPage() {
   const [duplicates, setDuplicates] = useState<DuplicateCheckResult | null>(null);
   const [view, setView] = useState<AdmissionView | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState('');
   // Placement comes from the live database: branch, samity and working area.
   const [placement, setPlacement] = useState({ branchId: '', samityId: '', workingAreaId: '' });
 
@@ -180,16 +182,19 @@ export function MemberAdmissionPage() {
       return;
     }
     // Final stage: submit the draft to the server, which creates the real
-    // member row. Placement falls back to the first database row and then to
-    // the legacy demo constants so the wizard also works offline/demo.
-    const effBranchId =
-      placement.branchId || branchList[0]?.id || '00000000-0000-4000-8000-0000000000b1';
-    const effAreaId =
-      placement.workingAreaId || areaList[0]?.id || '00000000-0000-4000-8000-0000000000a1';
-    const effSamityName =
-      samityList.find((s) => s.id === placement.samityId)?.name ?? samityList[0]?.name ?? 'Rupali Samity';
+    // member row. Placement comes from the live database — we never fabricate
+    // ids, because a non-existent working_area_id fails the foreign key and
+    // would throw away the whole admission.
+    const effBranchId = placement.branchId || branchList[0]?.id || '';
+    if (!effBranchId) {
+      setSubmitError('কোনো শাখা পাওয়া যায়নি — আগে একটি শাখা তৈরি করুন। / No branch available — create a branch first.');
+      return;
+    }
+    const effAreaId = placement.workingAreaId || areaList[0]?.id;
+    const effSamityName = samityList.find((s) => s.id === placement.samityId)?.name ?? samityList[0]?.name;
 
     setSubmitting(true);
+    setSubmitError('');
     try {
       const res = await api.post<{ admission: AdmissionView }>('/members/admissions', {
         branchId: effBranchId,
@@ -203,8 +208,9 @@ export function MemberAdmissionPage() {
           dob: form.dob,
           mobile: form.mobile,
           address: form.address,
-          workingAreaId: effAreaId,
-          samityName: effSamityName,
+          // Placement is optional in the API schema; omit rather than sending ''.
+          ...(effAreaId ? { workingAreaId: effAreaId } : {}),
+          ...(effSamityName ? { samityName: effSamityName } : {}),
           occupation: form.occupation,
           monthlyHouseholdIncome: form.monthlyHouseholdIncome,
           landOwnedDecimals: Number(form.landOwnedDecimals || 0),
@@ -219,11 +225,14 @@ export function MemberAdmissionPage() {
       void qc.invalidateQueries({ queryKey: ['members'] });
       void qc.invalidateQueries({ queryKey: ['dashboard-summary'] });
       void qc.invalidateQueries({ queryKey: ['samities'] });
-    } catch {
+      setSubmitted(true);
+    } catch (err) {
+      // Never claim success on a failed write — the previous code swallowed the
+      // error and showed the "completed" panel while nothing was saved.
       setView(null);
+      setSubmitError(err instanceof Error ? err.message : 'সংরক্ষণ ব্যর্থ হয়েছে / Save failed');
     } finally {
       setSubmitting(false);
-      setSubmitted(true);
     }
   };
 
@@ -273,6 +282,16 @@ export function MemberAdmissionPage() {
               );
             })}
           </div>
+
+          {submitError && (
+            <div className="flex items-start gap-2 rounded-md border border-rose-300 bg-rose-50 p-3 text-sm text-rose-800">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <div>
+                <p className="font-semibold">সংরক্ষণ ব্যর্থ হয়েছে / Could not save the member</p>
+                <p className="mt-0.5 text-xs">{submitError}</p>
+              </div>
+            </div>
+          )}
 
           {!submitted && (currentStep === 1 || currentStep === 2) && duplicateBanner(duplicates)}
 
@@ -479,8 +498,24 @@ export function MemberAdmissionPage() {
               </div>
               <h2 className="text-xl font-bold text-emerald-800">Member onboarding completed</h2>
               <p className="text-sm text-emerald-700">
-                The applicant has moved through the full admission workflow and the passbook is ready for issue.
+                The applicant is saved to the database and now appears in the Members list as{' '}
+                <span className="font-semibold">পর্যালোচনা / Review</span> — a branch manager approves it there
+                (status → active). Member number and passbook are already reserved.
               </p>
+              {view && (
+                <p className="text-xs text-emerald-800">
+                  সদস্য নম্বর: <span className="font-mono font-semibold">{view.memberNumber}</span> · পাসবুক:{' '}
+                  <span className="font-mono font-semibold">{view.passbookNo}</span>
+                </p>
+              )}
+              <div className="flex justify-center gap-2">
+                <Link
+                  to="/members?status=pending"
+                  className="inline-flex items-center rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700"
+                >
+                  পর্যালোচনা তালিকা দেখুন / View review list
+                </Link>
+              </div>
               <Button type="button" onClick={() => setSubmitted(false)} variant="outline">
                 Review again
               </Button>

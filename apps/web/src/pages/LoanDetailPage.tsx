@@ -111,7 +111,10 @@ export function LoanDetailPage() {
   }
 
   const a = app.data;
-  const doneStages = new Set(a.steps.filter((s) => s.action === 'done').map((s) => s.stage));
+  // `steps` is always an array from the API, but a partial/older payload must
+  // not blank the whole page.
+  const steps = a.steps ?? [];
+  const doneStages = new Set(steps.filter((s) => s.action === 'done').map((s) => s.stage));
   const allStages: LoanStage[] = ['member_request', 'officer_visit', 'household_check', 'guarantor', 'bm_review', 'am_review'];
   const needsAm = Number(a.requestedAmount) > 100000; // matches default policy limit for display
   const visibleStages = allStages.filter((s) => (s === 'am_review' ? needsAm : true));
@@ -124,7 +127,8 @@ export function LoanDetailPage() {
         <Link to="/loans" className="text-sm text-muted-foreground hover:underline">← সকল আবেদন</Link>
         <h1 className="mt-1 text-2xl font-bold">{a.applicationNumber}</h1>
         <p className="text-sm text-muted-foreground">
-          {a.memberName} ({a.memberCode}) · {a.productName} · {fmt(a.requestedAmount)} · {a.termMonths} মাস
+          {a.memberName ?? '—'} {a.memberCode ? `(${a.memberCode})` : ''} · {a.productName ?? '—'} · {fmt(a.requestedAmount)} ·{' '}
+          {a.termMonths} মাস
         </p>
         <p className="mt-1 text-sm">{a.purpose}</p>
         <div className="mt-2 flex flex-wrap gap-2">
@@ -157,8 +161,8 @@ export function LoanDetailPage() {
         </CardHeader>
         <CardContent className="space-y-2">
           {visibleStages.map((stage) => {
-            const done = doneStages.has(stage) || (stage === 'member_request' && a.steps.length > 0);
-            const stepRow = a.steps.find((s) => s.stage === stage);
+            const done = doneStages.has(stage) || (stage === 'member_request' && steps.length > 0);
+            const stepRow = steps.find((s) => s.stage === stage);
             return (
               <div key={stage} className={`flex items-start gap-2 rounded-md border p-2.5 text-sm ${done ? 'border-emerald-200 bg-emerald-50' : 'bg-card'}`}>
                 {done ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> : <Circle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />}

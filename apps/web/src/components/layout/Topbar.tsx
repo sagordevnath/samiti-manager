@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { LogOut } from 'lucide-react';
 import { useAuthStore, ensureDemoSession } from '@/stores/auth';
+import { apiMode } from '@/lib/apiMode';
 import { useUiStore, type ThemePreference } from '@/stores/ui';
 import { useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
@@ -58,13 +59,16 @@ export function Topbar() {
   };
 
   // Demo mode: "sign out" resets to a fresh demo session instead of logging out.
+  // Live mode: really sign out — land on /login for fresh credentials.
   const signOut = () => {
     setMenuOpen(false);
     clear();
-    ensureDemoSession();
     queryClient.clear();
-    window.location.assign('/');
-    window.location.reload();
+    void apiMode().then((mode) => {
+      if (mode === 'demo') ensureDemoSession();
+      window.location.assign(mode === 'demo' ? '/' : '/login');
+      window.location.reload();
+    });
   };
 
   const initials = user?.email ? user.email.slice(0, 2).toUpperCase() : '?';

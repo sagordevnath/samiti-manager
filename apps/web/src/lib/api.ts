@@ -28,6 +28,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (!res.ok) {
+    // Stale/expired session against a live API (or a timed-out demo session):
+    // drop it and land on the login screen. Login POSTs are exempt so a wrong
+    // password doesn't bounce the login page itself.
+    if (res.status === 401 && !path.startsWith('/auth/')) {
+      useAuthStore.getState().clear();
+      if (!window.location.pathname.startsWith('/login')) {
+        window.location.assign('/login');
+      }
+    }
     let code = 'INTERNAL';
     let message = res.statusText;
     let details: unknown;

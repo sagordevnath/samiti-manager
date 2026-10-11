@@ -54,7 +54,7 @@
     "emailInvalid": "সঠিক ইমেইল দিন",
     "passwordRequired": "পাসওয়ার্ড দিন",
     "loginFailed": "লগইন ব্যর্থ হয়েছে। তথ্য যাচাই করুন।",
-    "demoHint": "ডেমো: admin@samity.test / Admin1234!"
+    "demoHint": "ডেমো: admin@samity.test / Samity@2026"
   },
   "dashboard": {
     "title": "ড্যাশবোর্ড",
@@ -63,15 +63,25 @@
     "totalSavings": "মোট সঞ্চয়",
     "activeLoans": "চলমান ঋণ",
     "branches": "শাখা",
-    "apiOffline": "এপিআই অফলাইন — ডেমো তথ্য দেখানো হচ্ছে"
+    "apiOffline": "এপিআই অফলাইন — ডেমো তথ্য দেখানো হচ্ছে",
+    "viewReports": "রিপোর্ট দেখুন",
+    "openMembers": "সদস্য তালিকা খুলুন",
+    "openSavings": "সঞ্চয় খতিয়ান খুলুন",
+    "openLoans": "ঋণ আবেদন খুলুন",
+    "openBranches": "শাখা তালিকা খুলুন",
+    "quickActions": "দ্রুত কাজ",
+    "qaAdmission": "নতুন সদস্য",
+    "qaCollection": "আদায় শিট",
+    "qaLoan": "নতুন ঋণ",
+    "qaCenter": "সমিতি / কেন্দ্র",
+    "qaOverdue": "বকেয়া মামলা",
+    "qaAccounting": "হিসাবরক্ষণ"
   },
   "common": {
     "loading": "লোড হচ্ছে…",
     "error": "সমস্যা হয়েছে",
     "retry": "আবার চেষ্টা করুন",
     "language": "ভাষা",
-    "comingSoon": "এই মডিউলটি শীঘ্রই আসছে",
-    "underConstruction": "এই পেজটি তৈরি হচ্ছে। মডিউল অনুযায়ী রাউট প্রস্তুত আছে।",
     "menu": "মেনু",
     "more": "আরও",
     "close": "বন্ধ",

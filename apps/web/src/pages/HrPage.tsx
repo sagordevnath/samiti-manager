@@ -7,7 +7,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Banknote, CalendarCheck, ClipboardList, Gauge, Printer, ShieldAlert, UserCog, Users } from 'lucide-react';
+import { Banknote, CalendarCheck, ClipboardList, Gauge, Pencil, Plus, Printer, ShieldAlert, Trash2, UserCog, Users } from 'lucide-react';
 import type {
   Applicant,
   AttendanceEntry,
@@ -22,11 +22,26 @@ import type {
   Vacancy,
 } from '@samity/shared';
 import { LEAVE_LABELS_BN, leaveBalance, type LeaveType } from '@samity/shared';
+import {
+  DESIGNATIONS,
+  DESIGNATION_LABELS_BN,
+  STAFF_GRADES,
+  applicantCreateSchema,
+  applicantUpdateSchema,
+  staffCreateSchema,
+  staffUpdateSchema,
+  vacancyCreateSchema,
+  vacancyUpdateSchema,
+  type ApplicantCreateInput,
+  type StaffCreateInput,
+  type VacancyCreateInput,
+} from '@samity/shared';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { api } from '@/lib/api';
+import { ApiError, api } from '@/lib/api';
+import { useCan } from '@/lib/permissions';
 import { useMoneyFormatter } from '@/lib/digits';
 
 const TABS = ['staff', 'recruitment', 'attendance', 'movements', 'payroll', 'performance'] as const;
@@ -86,6 +101,50 @@ const DHAKA = '00000000-0000-4000-8000-0000000000b1';
 const VACANCY = '00000000-0000-4000-8000-0000000000a1';
 const TODAY = () => new Date().toISOString().slice(0, 10);
 
+type BranchLite = { id: string; name: string; name_bn: string | null; code: string };
+
+/** Blank create forms — reset targets after a successful POST. */
+const EMPTY_STAFF: StaffCreateInput = {
+  name: '',
+  nameBn: '',
+  designation: 'field_officer',
+  grade: 'G1',
+  branchId: null,
+  joiningDate: '',
+  mobile: '',
+  monthlyGross: '15000.00',
+};
+const EMPTY_VACANCY: VacancyCreateInput = { branchId: '', designation: 'field_officer', headcount: 1, reason: '' };
+const EMPTY_APPLICANT: ApplicantCreateInput = { vacancyId: '', name: '', mobile: '', educationLevel: '', experienceYears: 0 };
+
+/** In-flight edit of an existing row; `null` means no edit card is open. */
+type StaffEditState = {
+  id: string;
+  code: string;
+  form: {
+    name: string;
+    nameBn: string;
+    designation: StaffCreateInput['designation'];
+    grade: StaffCreateInput['grade'];
+    branchId: string;
+    joiningDate: string;
+    mobile: string;
+    monthlyGross: string;
+    /** Blank means "leave the stored value alone" — never wipe a mask by accident. */
+    nid: string;
+    bankAccount: string;
+    bankName: string;
+  };
+};
+type VacancyEditState = { id: string; form: VacancyCreateInput };
+type ApplicantEditState = { id: string; form: Omit<ApplicantCreateInput, 'vacancyId'> };
+
+const issueText = (issues: Array<{ path: Array<string | number>; message: string }>) =>
+  issues.map((i) => `${i.path.join('.')}: ${i.message}`).join(' · ');
+
+const createErrText = (e: unknown) =>
+  e instanceof ApiError ? e.message : e instanceof Error ? e.message : 'সংযোগ ব্যর্থ / Request failed';
+
 function Th({ children, right }: { children: React.ReactNode; right?: boolean }) {
   return <th className={`px-2 py-1.5 text-xs font-semibold ${right ? 'text-right' : 'text-left'}`}>{children}</th>;
 }
@@ -104,6 +163,16 @@ export function HrPage() {
   const [tab, setTab] = useState<Tab>('staff');
   const [busy, setBusy] = useState(false);
   const [search, setSearch] = useState('');
+  const canManageOrg = useCan()('org:manage');
+  const canManageBranch = useCan()('branch:manage');
+  const [createErr, setCreateErr] = useState('');
+  const [createOk, setCreateOk] = useState('');
+  const [staffForm, setStaffForm] = useState<StaffCreateInput>({ ...EMPTY_STAFF, joiningDate: TODAY() });
+  const [vacancyForm, setVacancyForm] = useState<VacancyCreateInput>(EMPTY_VACANCY);
+  const [applicantForm, setApplicantForm] = useState<ApplicantCreateInput>(EMPTY_APPLICANT);
+  const [staffEdit, setStaffEdit] = useState<StaffEditState | null>(null);
+  const [vacancyEdit, setVacancyEdit] = useState<VacancyEditState | null>(null);
+  const [applicantEdit, setApplicantEdit] = useState<ApplicantEditState | null>(null);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['hr'] });
   const act = (fn: () => Promise<unknown>) => {
@@ -116,6 +185,10 @@ export function HrPage() {
   const staff = useQuery({
     queryKey: ['hr', 'staff', search],
     queryFn: () => api.get<{ items: Staff[] }>(`/hr/staff${search ? `?q=${encodeURIComponent(search)}` : ''}`),
+  });
+  const branches = useQuery({
+    queryKey: ['hr', 'branches'],
+    queryFn: () => api.get<{ items: BranchLite[] }>('/org/branches'),
   });
   const vacancies = useQuery({
     queryKey: ['hr', 'vacancies'],
@@ -239,6 +312,244 @@ export function HrPage() {
     onSuccess: invalidate,
   });
 
+  // ── Create paths (staff, vacancy, applicant) ──
+  const createStaff = useMutation({
+    mutationFn: (values: StaffCreateInput) => api.post('/hr/staff', values),
+    onSuccess: (_r, values) => {
+      setCreateErr('');
+      setCreateOk(`কর্মচারী যোগ হয়েছে: ${values.nameBn} (${values.name})`);
+      setStaffForm({ ...EMPTY_STAFF, joiningDate: TODAY() });
+      void invalidate();
+    },
+    onError: (e) => {
+      setCreateOk('');
+      setCreateErr(createErrText(e));
+    },
+  });
+  const createVacancy = useMutation({
+    mutationFn: (values: VacancyCreateInput) => api.post('/hr/vacancies', values),
+    onSuccess: (_r, values) => {
+      setCreateErr('');
+      setCreateOk(`শূন্যপদ অনুরোধ তৈরি হয়েছে: ${DESIGNATION_LABELS_BN[values.designation] ?? values.designation} × ${values.headcount}`);
+      setVacancyForm(EMPTY_VACANCY);
+      void invalidate();
+    },
+    onError: (e) => {
+      setCreateOk('');
+      setCreateErr(createErrText(e));
+    },
+  });
+  const createApplicant = useMutation({
+    mutationFn: (values: ApplicantCreateInput) => api.post('/hr/applicants', values),
+    onSuccess: (_r, values) => {
+      setCreateErr('');
+      setCreateOk(`আবেদনকারী যোগ হয়েছে: ${values.name}`);
+      setApplicantForm(EMPTY_APPLICANT);
+      void invalidate();
+    },
+    onError: (e) => {
+      setCreateOk('');
+      setCreateErr(createErrText(e));
+    },
+  });
+
+  // ── Edit / remove paths — correcting records created by mistake ──
+  const saveStaff = useMutation({
+    mutationFn: ({ id, values }: { id: string; values: Record<string, unknown> }) => api.patch(`/hr/staff/${id}`, values),
+    onSuccess: (_r, { id }) => {
+      setCreateErr('');
+      setCreateOk(`কর্মচারী হালনাগাদ হয়েছে (${staffEdit?.code ?? id.slice(0, 8)})`);
+      setStaffEdit(null);
+      void invalidate();
+    },
+    onError: (e) => {
+      setCreateOk('');
+      setCreateErr(createErrText(e));
+    },
+  });
+  const saveVacancy = useMutation({
+    mutationFn: ({ id, values }: { id: string; values: Record<string, unknown> }) => api.patch(`/hr/vacancies/${id}`, values),
+    onSuccess: () => {
+      setCreateErr('');
+      setCreateOk('শূন্যপদ হালনাগাদ হয়েছে');
+      setVacancyEdit(null);
+      void invalidate();
+    },
+    onError: (e) => {
+      setCreateOk('');
+      setCreateErr(createErrText(e));
+    },
+  });
+  const saveApplicant = useMutation({
+    mutationFn: ({ id, values }: { id: string; values: Record<string, unknown> }) => api.patch(`/hr/applicants/${id}`, values),
+    onSuccess: () => {
+      setCreateErr('');
+      setCreateOk('আবেদনকারীর তথ্য হালনাগাদ হয়েছে');
+      setApplicantEdit(null);
+      void invalidate();
+    },
+    onError: (e) => {
+      setCreateOk('');
+      setCreateErr(createErrText(e));
+    },
+  });
+  const removeStaff = useMutation({
+    mutationFn: (id: string) => api.delete(`/hr/staff/${id}`),
+    onSuccess: () => {
+      setCreateErr('');
+      setCreateOk('কর্মচারী তালিকা থেকে মুছে ফেলা হয়েছে');
+      void invalidate();
+    },
+    onError: (e) => {
+      setCreateOk('');
+      setCreateErr(createErrText(e));
+    },
+  });
+  const removeVacancy = useMutation({
+    mutationFn: (id: string) => api.delete(`/hr/vacancies/${id}`),
+    onSuccess: () => {
+      setCreateErr('');
+      setCreateOk('শূন্যপদ প্রত্যাহার করা হয়েছে');
+      void invalidate();
+    },
+    onError: (e) => {
+      setCreateOk('');
+      setCreateErr(createErrText(e));
+    },
+  });
+  const removeApplicant = useMutation({
+    mutationFn: (id: string) => api.delete(`/hr/applicants/${id}`),
+    onSuccess: () => {
+      setCreateErr('');
+      setCreateOk('আবেদনকারী মুছে ফেলা হয়েছে');
+      void invalidate();
+    },
+    onError: (e) => {
+      setCreateOk('');
+      setCreateErr(createErrText(e));
+    },
+  });
+
+  const openStaffEdit = (s: Staff) =>
+    setStaffEdit({
+      id: s.id,
+      code: s.employeeCode,
+      form: {
+        name: s.name,
+        nameBn: s.nameBn,
+        designation: s.designation,
+        grade: s.grade,
+        branchId: s.branchId ?? '',
+        joiningDate: s.joiningDate,
+        mobile: s.mobile,
+        monthlyGross: s.monthlyGross,
+        nid: '',
+        bankAccount: '',
+        bankName: s.bankName ?? '',
+      },
+    });
+  const openVacancyEdit = (v: Vacancy) =>
+    setVacancyEdit({
+      id: v.id,
+      form: { branchId: v.branchId, designation: v.designation, headcount: v.headcount, reason: v.reason },
+    });
+  const openApplicantEdit = (a: Applicant) =>
+    setApplicantEdit({
+      id: a.id,
+      form: { name: a.name, mobile: a.mobile, educationLevel: a.educationLevel, experienceYears: a.experienceYears },
+    });
+
+  const submitStaff = () => {
+    setCreateErr('');
+    setCreateOk('');
+    const parsed = staffCreateSchema.safeParse(staffForm);
+    if (!parsed.success) {
+      setCreateErr(issueText(parsed.error.issues));
+      return;
+    }
+    createStaff.mutate(parsed.data);
+  };
+  const submitStaffEdit = () => {
+    if (!staffEdit) return;
+    setCreateErr('');
+    setCreateOk('');
+    const f = staffEdit.form;
+    // A blank NID/bank box means "unchanged": the API only re-encrypts when a
+    // new plaintext value is sent, so omitting it preserves the stored one.
+    const parsed = staffUpdateSchema.safeParse({
+      name: f.name,
+      nameBn: f.nameBn,
+      designation: f.designation,
+      grade: f.grade,
+      branchId: f.branchId || null,
+      joiningDate: f.joiningDate,
+      mobile: f.mobile,
+      monthlyGross: f.monthlyGross,
+      bankName: f.bankName || null,
+      ...(f.nid ? { nid: f.nid } : {}),
+      ...(f.bankAccount ? { bankAccount: f.bankAccount } : {}),
+    });
+    if (!parsed.success) {
+      setCreateErr(issueText(parsed.error.issues));
+      return;
+    }
+    saveStaff.mutate({ id: staffEdit.id, values: parsed.data as Record<string, unknown> });
+  };
+  const submitVacancyEdit = () => {
+    if (!vacancyEdit) return;
+    setCreateErr('');
+    setCreateOk('');
+    const parsed = vacancyUpdateSchema.safeParse(vacancyEdit.form);
+    if (!parsed.success) {
+      setCreateErr(issueText(parsed.error.issues));
+      return;
+    }
+    saveVacancy.mutate({ id: vacancyEdit.id, values: parsed.data as Record<string, unknown> });
+  };
+  const submitApplicantEdit = () => {
+    if (!applicantEdit) return;
+    setCreateErr('');
+    setCreateOk('');
+    const parsed = applicantUpdateSchema.safeParse(applicantEdit.form);
+    if (!parsed.success) {
+      setCreateErr(issueText(parsed.error.issues));
+      return;
+    }
+    saveApplicant.mutate({ id: applicantEdit.id, values: parsed.data as Record<string, unknown> });
+  };
+  const submitVacancy = () => {
+    setCreateErr('');
+    setCreateOk('');
+    const parsed = vacancyCreateSchema.safeParse(vacancyForm);
+    if (!parsed.success) {
+      setCreateErr(issueText(parsed.error.issues));
+      return;
+    }
+    createVacancy.mutate(parsed.data);
+  };
+  const submitApplicant = () => {
+    setCreateErr('');
+    setCreateOk('');
+    const parsed = applicantCreateSchema.safeParse(applicantForm);
+    if (!parsed.success) {
+      setCreateErr(issueText(parsed.error.issues));
+      return;
+    }
+    createApplicant.mutate(parsed.data);
+  };
+
+  const branchOptions = branches.data?.items ?? [];
+  const createBanners = (
+    <>
+      {createErr ? (
+        <div className="rounded-[var(--radius)] border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">{createErr}</div>
+      ) : null}
+      {createOk ? (
+        <div className="rounded-[var(--radius)] border border-teal-600/30 bg-teal-600/10 px-3 py-2 text-xs text-teal-800 dark:text-teal-200">{createOk}</div>
+      ) : null}
+    </>
+  );
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -246,7 +557,7 @@ export function HrPage() {
         <Users className="h-5 w-5 text-muted-foreground" />
       </div>
 
-      <div className="flex flex-wrap gap-1 rounded-lg border bg-muted/40 p-1">
+      <div className="page-tabs flex flex-wrap gap-1 rounded-lg border bg-card/90 p-1 backdrop-blur-md">
         {TABS.map((k) => (
           <button
             key={k}
@@ -266,6 +577,197 @@ export function HrPage() {
         <>
           {/* ── Staff master ── */}
           {tab === 'staff' && (
+            <>
+              {createBanners}
+              {canManageOrg && (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="flex items-center gap-2 text-base">
+                      <Plus className="h-4 w-4" /> নতুন কর্মচারী
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid gap-3 sm:grid-cols-4">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="s-namebn">নাম (বাংলা)</Label>
+                        <Input id="s-namebn" value={staffForm.nameBn} onChange={(e) => setStaffForm({ ...staffForm, nameBn: e.target.value })} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="s-name">নাম (English)</Label>
+                        <Input id="s-name" value={staffForm.name} onChange={(e) => setStaffForm({ ...staffForm, name: e.target.value })} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="s-desig">পদ</Label>
+                        <select
+                          id="s-desig"
+                          className="h-11 w-full rounded-[var(--radius)] border border-input bg-background/60 px-3 text-sm"
+                          value={staffForm.designation}
+                          onChange={(e) => setStaffForm({ ...staffForm, designation: e.target.value as StaffCreateInput['designation'] })}
+                        >
+                          {DESIGNATIONS.map((d) => (
+                            <option key={d} value={d}>
+                              {DESIGNATION_LABELS_BN[d] ?? d}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="s-grade">গ্রেড</Label>
+                        <select
+                          id="s-grade"
+                          className="h-11 w-full rounded-[var(--radius)] border border-input bg-background/60 px-3 text-sm"
+                          value={staffForm.grade}
+                          onChange={(e) => setStaffForm({ ...staffForm, grade: e.target.value as StaffCreateInput['grade'] })}
+                        >
+                          {STAFF_GRADES.map((g) => (
+                            <option key={g} value={g}>
+                              {g}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="s-branch">শাখা</Label>
+                        <select
+                          id="s-branch"
+                          className="h-11 w-full rounded-[var(--radius)] border border-input bg-background/60 px-3 text-sm"
+                          value={staffForm.branchId ?? ''}
+                          onChange={(e) => setStaffForm({ ...staffForm, branchId: e.target.value || null })}
+                        >
+                          <option value="">— প্রধান কার্যালয় —</option>
+                          {branchOptions.map((b) => (
+                            <option key={b.id} value={b.id}>
+                              {b.name_bn ?? b.name} ({b.code})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="s-join">যোগদানের তারিখ</Label>
+                        <Input id="s-join" type="date" value={staffForm.joiningDate} onChange={(e) => setStaffForm({ ...staffForm, joiningDate: e.target.value })} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="s-mobile">মোবাইল</Label>
+                        <Input id="s-mobile" placeholder="01XXXXXXXXX" value={staffForm.mobile} onChange={(e) => setStaffForm({ ...staffForm, mobile: e.target.value })} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="s-gross">মাসিক গ্রস বেতন</Label>
+                        <Input id="s-gross" value={staffForm.monthlyGross} onChange={(e) => setStaffForm({ ...staffForm, monthlyGross: e.target.value })} />
+                      </div>
+                    </div>
+                    <div className="mt-3">
+                      <Button size="sm" disabled={createStaff.isPending} onClick={submitStaff}>
+                        {createStaff.isPending ? 'সংরক্ষণ হচ্ছে…' : 'কর্মচারী যোগ করুন'}
+                      </Button>
+                    </div>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      NID/ব্যাংক হিসাব পরে সম্পাদনায় যোগ করা যাবে; নতুন কর্মচারী প্রবেশনারি হিসেবে যোগ হয়।
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
+              {staffEdit && canManageOrg && (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="flex items-center gap-2 text-base">
+                      <Pencil className="h-4 w-4" /> কর্মচারী সম্পাদনা — <span className="font-mono text-sm">{staffEdit.code}</span>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid gap-3 sm:grid-cols-4">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="e-namebn">নাম (বাংলা)</Label>
+                        <Input id="e-namebn" value={staffEdit.form.nameBn} onChange={(e) => setStaffEdit({ ...staffEdit, form: { ...staffEdit.form, nameBn: e.target.value } })} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="e-name">নাম (English)</Label>
+                        <Input id="e-name" value={staffEdit.form.name} onChange={(e) => setStaffEdit({ ...staffEdit, form: { ...staffEdit.form, name: e.target.value } })} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="e-desig">পদ</Label>
+                        <select
+                          id="e-desig"
+                          className="h-11 w-full rounded-[var(--radius)] border border-input bg-background/60 px-3 text-sm"
+                          value={staffEdit.form.designation}
+                          onChange={(e) => setStaffEdit({ ...staffEdit, form: { ...staffEdit.form, designation: e.target.value as StaffCreateInput['designation'] } })}
+                        >
+                          {DESIGNATIONS.map((d) => (
+                            <option key={d} value={d}>
+                              {DESIGNATION_LABELS_BN[d] ?? d}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="e-grade">গ্রেড</Label>
+                        <select
+                          id="e-grade"
+                          className="h-11 w-full rounded-[var(--radius)] border border-input bg-background/60 px-3 text-sm"
+                          value={staffEdit.form.grade}
+                          onChange={(e) => setStaffEdit({ ...staffEdit, form: { ...staffEdit.form, grade: e.target.value as StaffCreateInput['grade'] } })}
+                        >
+                          {STAFF_GRADES.map((g) => (
+                            <option key={g} value={g}>
+                              {g}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="e-branch">শাখা</Label>
+                        <select
+                          id="e-branch"
+                          className="h-11 w-full rounded-[var(--radius)] border border-input bg-background/60 px-3 text-sm"
+                          value={staffEdit.form.branchId}
+                          onChange={(e) => setStaffEdit({ ...staffEdit, form: { ...staffEdit.form, branchId: e.target.value } })}
+                        >
+                          <option value="">— প্রধান কার্যালয় —</option>
+                          {branchOptions.map((b) => (
+                            <option key={b.id} value={b.id}>
+                              {b.name_bn ?? b.name} ({b.code})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="e-join">যোগদানের তারিখ</Label>
+                        <Input id="e-join" type="date" value={staffEdit.form.joiningDate} onChange={(e) => setStaffEdit({ ...staffEdit, form: { ...staffEdit.form, joiningDate: e.target.value } })} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="e-mobile">মোবাইল</Label>
+                        <Input id="e-mobile" value={staffEdit.form.mobile} onChange={(e) => setStaffEdit({ ...staffEdit, form: { ...staffEdit.form, mobile: e.target.value } })} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="e-gross">মাসিক গ্রস বেতন</Label>
+                        <Input id="e-gross" value={staffEdit.form.monthlyGross} onChange={(e) => setStaffEdit({ ...staffEdit, form: { ...staffEdit.form, monthlyGross: e.target.value } })} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="e-nid">নতুন NID (খালি = অপরিবর্তিত)</Label>
+                        <Input id="e-nid" value={staffEdit.form.nid} onChange={(e) => setStaffEdit({ ...staffEdit, form: { ...staffEdit.form, nid: e.target.value } })} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="e-bank">নতুন ব্যাংক হিসাব (খালি = অপরিবর্তিত)</Label>
+                        <Input id="e-bank" value={staffEdit.form.bankAccount} onChange={(e) => setStaffEdit({ ...staffEdit, form: { ...staffEdit.form, bankAccount: e.target.value } })} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="e-bankname">ব্যাংকের নাম</Label>
+                        <Input id="e-bankname" value={staffEdit.form.bankName} onChange={(e) => setStaffEdit({ ...staffEdit, form: { ...staffEdit.form, bankName: e.target.value } })} />
+                      </div>
+                    </div>
+                    <div className="mt-3 flex gap-2">
+                      <Button size="sm" disabled={saveStaff.isPending} onClick={submitStaffEdit}>
+                        {saveStaff.isPending ? 'সংরক্ষণ হচ্ছে…' : 'পরিবর্তন সংরক্ষণ করুন'}
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setStaffEdit(null)}>
+                        বাতিল
+                      </Button>
+                    </div>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      NID/ব্যাংক নতুন করে দিলে সেটি AES-256-GCM এ এনক্রিপ্ট হবে; খালি রাখলে আগের মান অপরিবর্তিত থাকে।
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-base">
@@ -309,11 +811,33 @@ export function HrPage() {
                           <Pill label={STATUS_BN[s.status] ?? s.status} tone={s.status === 'confirmed' ? 'green' : s.status === 'probation' ? 'amber' : 'muted'} />
                         </Td>
                         <Td>
-                          {s.status === 'probation' && (
-                            <Button size="sm" variant="outline" disabled={busy} onClick={() => act(() => confirmStaff.mutateAsync(s.id))}>
-                              স্থায়ী করুন
-                            </Button>
-                          )}
+                          <div className="flex flex-wrap justify-end gap-1">
+                            {s.status === 'probation' && (
+                              <Button size="sm" variant="outline" disabled={busy} onClick={() => act(() => confirmStaff.mutateAsync(s.id))}>
+                                স্থায়ী করুন
+                              </Button>
+                            )}
+                            {canManageOrg && (
+                              <Button size="sm" variant="ghost" disabled={busy} onClick={() => openStaffEdit(s)}>
+                                <Pencil className="mr-1 h-3.5 w-3.5" /> সম্পাদনা
+                              </Button>
+                            )}
+                            {canManageOrg && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="text-destructive"
+                                disabled={busy}
+                                onClick={() => {
+                                  if (window.confirm(`${s.employeeCode} — ${s.nameBn} তালিকা থেকে মুছে ফেলবেন? / Remove this staff record?`)) {
+                                    act(() => removeStaff.mutateAsync(s.id));
+                                  }
+                                }}
+                              >
+                                <Trash2 className="mr-1 h-3.5 w-3.5" /> মুছুন
+                              </Button>
+                            )}
+                          </div>
                         </Td>
                       </tr>
                     ))}
@@ -324,11 +848,204 @@ export function HrPage() {
                 </p>
               </CardContent>
             </Card>
+            </>
           )}
 
           {/* ── Recruitment ── */}
           {tab === 'recruitment' && (
             <div className="space-y-4">
+              {createBanners}
+              {canManageBranch && (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="flex items-center gap-2 text-base">
+                      <Plus className="h-4 w-4" /> নতুন শূন্যপদ
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid gap-3 sm:grid-cols-4">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="v-branch">শাখা</Label>
+                        <select
+                          id="v-branch"
+                          className="h-11 w-full rounded-[var(--radius)] border border-input bg-background/60 px-3 text-sm"
+                          value={vacancyForm.branchId}
+                          onChange={(e) => setVacancyForm({ ...vacancyForm, branchId: e.target.value })}
+                        >
+                          <option value="">— শাখা বাছুন —</option>
+                          {branchOptions.map((b) => (
+                            <option key={b.id} value={b.id}>
+                              {b.name_bn ?? b.name} ({b.code})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="v-desig">পদ</Label>
+                        <select
+                          id="v-desig"
+                          className="h-11 w-full rounded-[var(--radius)] border border-input bg-background/60 px-3 text-sm"
+                          value={vacancyForm.designation}
+                          onChange={(e) => setVacancyForm({ ...vacancyForm, designation: e.target.value as VacancyCreateInput['designation'] })}
+                        >
+                          {DESIGNATIONS.map((d) => (
+                            <option key={d} value={d}>
+                              {DESIGNATION_LABELS_BN[d] ?? d}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="v-head">সংখ্যা</Label>
+                        <Input
+                          id="v-head"
+                          type="number"
+                          min={1}
+                          max={20}
+                          value={vacancyForm.headcount}
+                          onChange={(e) => setVacancyForm({ ...vacancyForm, headcount: Number(e.target.value) })}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="v-reason">কারণ</Label>
+                        <Input id="v-reason" placeholder="নতুন পদ / পদত্যাগ" value={vacancyForm.reason} onChange={(e) => setVacancyForm({ ...vacancyForm, reason: e.target.value })} />
+                      </div>
+                    </div>
+                    <div className="mt-3">
+                      <Button size="sm" disabled={createVacancy.isPending} onClick={submitVacancy}>
+                        {createVacancy.isPending ? 'সংরক্ষণ হচ্ছে…' : 'শূন্যপদ অনুরোধ করুন'}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+              {canManageBranch && (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="flex items-center gap-2 text-base">
+                      <Plus className="h-4 w-4" /> নতুন আবেদনকারী
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid gap-3 sm:grid-cols-5">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="a-vac">শূন্যপদ</Label>
+                        <select
+                          id="a-vac"
+                          className="h-11 w-full rounded-[var(--radius)] border border-input bg-background/60 px-3 text-sm"
+                          value={applicantForm.vacancyId}
+                          onChange={(e) => setApplicantForm({ ...applicantForm, vacancyId: e.target.value })}
+                        >
+                          <option value="">— শূন্যপদ বাছুন —</option>
+                          {(vacancies.data?.items ?? []).map((v) => (
+                            <option key={v.id} value={v.id}>
+                              {v.branchName} · {DESIGNATION_LABELS_BN[v.designation] ?? v.designation}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="a-name">নাম</Label>
+                        <Input id="a-name" value={applicantForm.name} onChange={(e) => setApplicantForm({ ...applicantForm, name: e.target.value })} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="a-mobile">মোবাইল</Label>
+                        <Input id="a-mobile" placeholder="01XXXXXXXXX" value={applicantForm.mobile} onChange={(e) => setApplicantForm({ ...applicantForm, mobile: e.target.value })} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="a-edu">শিক্ষা</Label>
+                        <Input id="a-edu" placeholder="স্নাতক / HSC" value={applicantForm.educationLevel} onChange={(e) => setApplicantForm({ ...applicantForm, educationLevel: e.target.value })} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="a-exp">অভিজ্ঞতা (বছর)</Label>
+                        <Input
+                          id="a-exp"
+                          type="number"
+                          min={0}
+                          max={40}
+                          value={applicantForm.experienceYears}
+                          onChange={(e) => setApplicantForm({ ...applicantForm, experienceYears: Number(e.target.value) })}
+                        />
+                      </div>
+                    </div>
+                    <div className="mt-3">
+                      <Button size="sm" variant="outline" disabled={createApplicant.isPending} onClick={submitApplicant}>
+                        {createApplicant.isPending ? 'সংরক্ষণ হচ্ছে…' : 'আবেদনকারী যোগ করুন'}
+                      </Button>
+                    </div>
+                    {(vacancies.data?.items ?? []).length === 0 ? (
+                      <p className="mt-2 text-xs text-muted-foreground">আগে একটি শূন্যপদ অনুরোধ করুন — আবেদনকারী তার অধীনে যোগ হয়।</p>
+                    ) : null}
+                  </CardContent>
+                </Card>
+              )}
+              {vacancyEdit && canManageBranch && (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="flex items-center gap-2 text-base">
+                      <Pencil className="h-4 w-4" /> শূন্যপদ সম্পাদনা
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid gap-3 sm:grid-cols-4">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="ev-branch">শাখা</Label>
+                        <select
+                          id="ev-branch"
+                          className="h-11 w-full rounded-[var(--radius)] border border-input bg-background/60 px-3 text-sm"
+                          value={vacancyEdit.form.branchId}
+                          onChange={(e) => setVacancyEdit({ ...vacancyEdit, form: { ...vacancyEdit.form, branchId: e.target.value } })}
+                        >
+                          <option value="">— শাখা বাছুন —</option>
+                          {branchOptions.map((b) => (
+                            <option key={b.id} value={b.id}>
+                              {b.name_bn ?? b.name} ({b.code})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="ev-desig">পদ</Label>
+                        <select
+                          id="ev-desig"
+                          className="h-11 w-full rounded-[var(--radius)] border border-input bg-background/60 px-3 text-sm"
+                          value={vacancyEdit.form.designation}
+                          onChange={(e) => setVacancyEdit({ ...vacancyEdit, form: { ...vacancyEdit.form, designation: e.target.value as VacancyCreateInput['designation'] } })}
+                        >
+                          {DESIGNATIONS.map((d) => (
+                            <option key={d} value={d}>
+                              {DESIGNATION_LABELS_BN[d] ?? d}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="ev-head">সংখ্যা</Label>
+                        <Input
+                          id="ev-head"
+                          type="number"
+                          min={1}
+                          max={20}
+                          value={vacancyEdit.form.headcount}
+                          onChange={(e) => setVacancyEdit({ ...vacancyEdit, form: { ...vacancyEdit.form, headcount: Number(e.target.value) } })}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="ev-reason">কারণ</Label>
+                        <Input id="ev-reason" value={vacancyEdit.form.reason} onChange={(e) => setVacancyEdit({ ...vacancyEdit, form: { ...vacancyEdit.form, reason: e.target.value } })} />
+                      </div>
+                    </div>
+                    <div className="mt-3 flex gap-2">
+                      <Button size="sm" disabled={saveVacancy.isPending} onClick={submitVacancyEdit}>
+                        {saveVacancy.isPending ? 'সংরক্ষণ হচ্ছে…' : 'পরিবর্তন সংরক্ষণ করুন'}
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setVacancyEdit(null)}>
+                        বাতিল
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
               <Card>
                 <CardHeader className="pb-2">
                   <CardTitle className="flex items-center gap-2 text-base">
@@ -358,16 +1075,38 @@ export function HrPage() {
                             <Pill label={STATUS_BN[v.status] ?? v.status} tone={v.status === 'approved' ? 'green' : v.status === 'requested' ? 'amber' : 'red'} />
                           </Td>
                           <Td>
-                            {v.status === 'requested' && (
-                              <>
-                                <Button size="sm" variant="outline" disabled={busy} onClick={() => act(() => decideVacancy.mutateAsync({ id: v.id, decision: 'approve' }))}>
-                                  অনুমোদন
-                                </Button>{' '}
-                                <Button size="sm" variant="ghost" disabled={busy} onClick={() => act(() => decideVacancy.mutateAsync({ id: v.id, decision: 'reject' }))}>
-                                  বাতিল
+                            <div className="flex flex-wrap justify-end gap-1">
+                              {v.status === 'requested' && (
+                                <>
+                                  <Button size="sm" variant="outline" disabled={busy} onClick={() => act(() => decideVacancy.mutateAsync({ id: v.id, decision: 'approve' }))}>
+                                    অনুমোদন
+                                  </Button>
+                                  <Button size="sm" variant="ghost" disabled={busy} onClick={() => act(() => decideVacancy.mutateAsync({ id: v.id, decision: 'reject' }))}>
+                                    বাতিল
+                                  </Button>
+                                </>
+                              )}
+                              {canManageBranch && (v.status === 'requested' || v.status === 'approved') && (
+                                <Button size="sm" variant="ghost" disabled={busy} onClick={() => openVacancyEdit(v)}>
+                                  <Pencil className="mr-1 h-3.5 w-3.5" /> সম্পাদনা
                                 </Button>
-                              </>
-                            )}
+                              )}
+                              {canManageBranch && (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="text-destructive"
+                                  disabled={busy}
+                                  onClick={() => {
+                                    if (window.confirm(`"${v.reason}" শূন্যপদটি প্রত্যাহার করবেন? / Withdraw this vacancy?`)) {
+                                      act(() => removeVacancy.mutateAsync(v.id));
+                                    }
+                                  }}
+                                >
+                                  <Trash2 className="mr-1 h-3.5 w-3.5" /> মুছুন
+                                </Button>
+                              )}
+                            </div>
                           </Td>
                         </tr>
                       ))}
@@ -375,6 +1114,50 @@ export function HrPage() {
                   </table>
                 </CardContent>
               </Card>
+              {applicantEdit && canManageBranch && (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="flex items-center gap-2 text-base">
+                      <Pencil className="h-4 w-4" /> আবেদনকারী সম্পাদনা
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid gap-3 sm:grid-cols-4">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="ea-name">নাম</Label>
+                        <Input id="ea-name" value={applicantEdit.form.name} onChange={(e) => setApplicantEdit({ ...applicantEdit, form: { ...applicantEdit.form, name: e.target.value } })} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="ea-mobile">মোবাইল</Label>
+                        <Input id="ea-mobile" value={applicantEdit.form.mobile} onChange={(e) => setApplicantEdit({ ...applicantEdit, form: { ...applicantEdit.form, mobile: e.target.value } })} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="ea-edu">শিক্ষা</Label>
+                        <Input id="ea-edu" value={applicantEdit.form.educationLevel} onChange={(e) => setApplicantEdit({ ...applicantEdit, form: { ...applicantEdit.form, educationLevel: e.target.value } })} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="ea-exp">অভিজ্ঞতা (বছর)</Label>
+                        <Input
+                          id="ea-exp"
+                          type="number"
+                          min={0}
+                          max={40}
+                          value={applicantEdit.form.experienceYears}
+                          onChange={(e) => setApplicantEdit({ ...applicantEdit, form: { ...applicantEdit.form, experienceYears: Number(e.target.value) } })}
+                        />
+                      </div>
+                    </div>
+                    <div className="mt-3 flex gap-2">
+                      <Button size="sm" disabled={saveApplicant.isPending} onClick={submitApplicantEdit}>
+                        {saveApplicant.isPending ? 'সংরক্ষণ হচ্ছে…' : 'পরিবর্তন সংরক্ষণ করুন'}
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setApplicantEdit(null)}>
+                        বাতিল
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
               <Card>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-base">আবেদনকারী ও ভাইভা</CardTitle>
@@ -422,6 +1205,26 @@ export function HrPage() {
                                 <Link to="/hr" className="text-xs text-teal-700 underline" onClick={() => window.dispatchEvent(new CustomEvent('hr:print-offer', { detail: a.id }))}>
                                   অফার পত্র
                                 </Link>
+                              )}
+                              {canManageBranch && a.status !== 'joined' && (
+                                <Button size="sm" variant="ghost" disabled={busy} onClick={() => openApplicantEdit(a)}>
+                                  <Pencil className="mr-1 h-3.5 w-3.5" /> সম্পাদনা
+                                </Button>
+                              )}
+                              {canManageBranch && a.status !== 'joined' && (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="text-destructive"
+                                  disabled={busy}
+                                  onClick={() => {
+                                    if (window.confirm(`${a.name} — আবেদনকারী মুছে ফেলবেন? / Delete this applicant?`)) {
+                                      act(() => removeApplicant.mutateAsync(a.id));
+                                    }
+                                  }}
+                                >
+                                  <Trash2 className="mr-1 h-3.5 w-3.5" /> মুছুন
+                                </Button>
                               )}
                             </Td>
                           </tr>

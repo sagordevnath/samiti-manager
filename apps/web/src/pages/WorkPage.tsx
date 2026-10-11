@@ -424,7 +424,7 @@ export function WorkPage() {
 
       {error && <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
 
-      <div className="flex flex-wrap gap-1 rounded-lg border bg-muted/40 p-1">
+      <div className="page-tabs flex flex-wrap gap-1 rounded-lg border bg-card/90 p-1 backdrop-blur-md">
         {(Object.keys(TAB_LABELS) as Tab[]).map((k) => (
           <button
             key={k}

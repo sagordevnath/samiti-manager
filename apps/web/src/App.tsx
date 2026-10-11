@@ -2,8 +2,8 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { ForbiddenPage, NotFoundPage } from '@/pages/ErrorPages';
+import { LoginPage } from '@/pages/LoginPage';
 import { DashboardPage } from '@/pages/DashboardPage';
-import { PlaceholderPage } from '@/pages/PlaceholderPage';
 import { OrgTreePage } from '@/pages/OrgTreePage';
 import { BranchesPage } from '@/pages/BranchesPage';
 import { BranchFormPage } from '@/pages/BranchFormPage';
@@ -37,6 +37,7 @@ import { ProgramsOpsPage } from '@/pages/ProgramsOpsPage';
 import { DonorReportPrintPage } from '@/pages/DonorReportPrintPage';
 import { CertificatePrintPage } from '@/pages/CertificatePrintPage';
 import { SelfServicePage } from '@/pages/SelfServicePage';
+import { UsersPage } from '@/pages/UsersPage';
 import { DelinquencyPage } from '@/pages/DelinquencyPage';
 import { RecoveryPage } from '@/pages/RecoveryPage';
 import { MisPage } from '@/pages/MisPage';
@@ -94,9 +95,11 @@ export default function App() {
         <Route path="/branches" element={<BranchesPage />} />
         <Route path="/branches/new" element={<BranchFormPage />} />
         <Route path="/organization" element={<OrgTreePage />} />
+        {/* Legacy/NAV alias — the sidebar links to /organization/tree. */}
+        <Route path="/organization/tree" element={<OrgTreePage />} />
         <Route path="/working-areas" element={<WorkingAreasPage />} />
         <Route path="/map" element={<BranchMapPage />} />
-        <Route path="/users" element={<PlaceholderPage />} />
+        <Route path="/users" element={<UsersPage />} />
         <Route path="/forbidden" element={<ForbiddenPage />} />
         <Route path="/reports" element={<MisPage />} />
         <Route path="/reports/ops" element={<MisOpsPage />} />
@@ -106,6 +109,9 @@ export default function App() {
       </Route>
       {/* Public document verification (req 7) — outside the authed layout. */}
       <Route path="/verify/:code" element={<VerifyPage />} />
+      {/* Login: shown in live mode (real Supabase credentials). Demo mode never
+          reaches it — ProtectedRoute seeds the demo session instead. */}
+      <Route path="/login" element={<LoginPage />} />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );

@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -18,19 +19,32 @@ const formSchema = z.object({
 type FormValues = z.infer<typeof formSchema>;
 
 /**
- * Login placeholder page — wires the form, store and API call.
- * When Supabase Auth is connected, POST /auth/login returns a real JWT.
+ * Login page for live mode: POST /auth/login proxies Supabase Auth and
+ * returns a real JWT. The demo credentials are prefilled — they exist as a
+ * real user once supabase/demo-seed-full.sql (or scripts/seed-demo.mjs) has
+ * been run; in demo mode the API accepts them too.
  */
 export function LoginPage() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const setSession = useAuthStore((s) => s.setSession);
+  const accessToken = useAuthStore((s) => s.accessToken);
   const [serverError, setServerError] = useState<string | null>(null);
+
+  // Already signed in (or just signed in on this render) → leave /login.
+  // Without this the user stays on the login form after a 200 response.
+  useEffect(() => {
+    if (accessToken) navigate('/', { replace: true });
+  }, [accessToken, navigate]);
 
   const {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
-  } = useForm<FormValues>({ resolver: zodResolver(formSchema) });
+  } = useForm<FormValues>({
+    resolver: zodResolver(formSchema),
+    defaultValues: { email: 'admin@samity.test', password: 'Samity@2026' },
+  });
 
   const onSubmit = async (values: FormValues) => {
     setServerError(null);
@@ -40,6 +54,7 @@ export function LoginPage() {
         values,
       );
       setSession({ accessToken: res.accessToken, refreshToken: res.refreshToken, user: res.user });
+      navigate('/', { replace: true });
     } catch (err) {
       setServerError(err instanceof ApiError ? err.message : t('auth.loginFailed'));
     }

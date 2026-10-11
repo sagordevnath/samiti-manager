@@ -560,16 +560,20 @@ export default function SecurityPage() {
   const [tab, setTab] = useState<Tab>('audit');
   return (
     <div className="space-y-4 p-4">
-      <div className="flex gap-1 overflow-x-auto">
-        {TABS.map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`whitespace-nowrap rounded-md px-3 py-1.5 text-sm ${tab === t ? 'bg-teal-700 text-white' : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}
-          >
-            {TAB_LABELS[t]}
-          </button>
-        ))}
+      {/* The strip is sticky; horizontal overflow lives on the inner row so the
+          sticky ancestor keeps `overflow: visible` (required for position:sticky). */}
+      <div className="page-tabs rounded-lg border bg-card/90 p-1 backdrop-blur-md">
+        <div className="flex gap-1 overflow-x-auto">
+          {TABS.map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`whitespace-nowrap rounded-md px-3 py-1.5 text-sm ${tab === t ? 'bg-teal-700 text-white' : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}
+            >
+              {TAB_LABELS[t]}
+            </button>
+          ))}
+        </div>
       </div>
       {tab === 'audit' && <AuditTab />}
       {tab === 'protection' && <ProtectionTab />}

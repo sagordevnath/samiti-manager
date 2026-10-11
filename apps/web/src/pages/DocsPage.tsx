@@ -439,7 +439,7 @@ export default function DocsPage() {
   const [tab, setTab] = useState<Tab>('generate');
   return (
     <div className="space-y-4 p-4">
-      <div className="flex flex-wrap gap-2">
+      <div className="page-tabs flex flex-wrap gap-2 rounded-lg border bg-card/90 p-1 backdrop-blur-md">
         {TABS.map((t) => (
           <button
             key={t}

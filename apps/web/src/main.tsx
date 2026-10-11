@@ -6,10 +6,6 @@ import App from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import './index.css';
 import './lib/i18n';
-import { ensureDemoSession } from './stores/auth';
-
-// Demo mode: no login wall — open with a seeded super_admin session.
-ensureDemoSession();
 
 const queryClient = new QueryClient({
   defaultOptions: {

@@ -231,6 +231,18 @@
     background: transparent;
   }
 
+  /* ── Sticky in-page submenu (module tab strip) ────────────────────────────
+     Every module page renders a submenu of tabs. Pinning it just under the
+     fixed 3.5rem topbar keeps that submenu reachable while the page content
+     scrolls, so the menu and the page never scroll "differently". Pairs with
+     an opaque `bg-card/90 backdrop-blur-md` on the strip so scrolled rows
+     don't bleed through. */
+  .page-tabs {
+    position: sticky;
+    top: 3.5rem;
+    z-index: 30;
+  }
+
   /* Touch targets ≥44px on coarse pointers (field phones). */
   @media (pointer: coarse) {
     .touch-safe {

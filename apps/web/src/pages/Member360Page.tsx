@@ -131,7 +131,7 @@ export function Member360Page() {
         </Card>
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="page-tabs flex flex-wrap gap-2 rounded-lg border bg-card/90 p-1 backdrop-blur-md">
         {TABS.map((t) => (
           <Button key={t.key} size="sm" variant={tab === t.key ? 'default' : 'outline'} onClick={() => setTab(t.key)}>
             <t.icon className="h-4 w-4" /> {t.label}

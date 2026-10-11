@@ -824,7 +824,7 @@ export default function MisOpsPage() {
         <h1 className="text-xl font-bold">রিপোর্ট অপারেশন ও কমপ্লায়েন্স</h1>
       </header>
 
-      <nav className="flex flex-wrap gap-1 rounded-lg bg-muted p-1">
+      <nav className="page-tabs flex flex-wrap gap-1 rounded-lg border bg-card/90 p-1 backdrop-blur-md">
         {TABS.map((k) => {
           const I = TAB_ICONS[k];
           return (

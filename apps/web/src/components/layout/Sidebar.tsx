@@ -18,7 +18,9 @@ export function Sidebar() {
   })).filter((g) => g.items.length > 0);
 
   return (
-    <nav className="scroll-slim flex-1 space-y-5 overflow-y-auto px-3 py-3">
+    /* min-h-0 is required: a flex child defaults to min-height:auto, which would
+       let the menu grow past the aside and defeat the independent scroll. */
+    <nav className="scroll-slim min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-3 py-3">
       {visibleGroups.map((group) => (
         <div key={group.key}>
           <p className="px-2 pb-1.5 text-[0.6875rem] font-bold uppercase tracking-[0.08em] text-muted-foreground/80">

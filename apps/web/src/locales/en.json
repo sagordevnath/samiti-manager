@@ -54,7 +54,7 @@
     "emailInvalid": "Enter a valid email",
     "passwordRequired": "Password is required",
     "loginFailed": "Login failed. Check your credentials.",
-    "demoHint": "Demo: admin@samity.test / Admin1234!"
+    "demoHint": "Demo: admin@samity.test / Samity@2026"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -63,15 +63,25 @@
     "totalSavings": "Total savings",
     "activeLoans": "Active loans",
     "branches": "Branches",
-    "apiOffline": "API offline — showing demo data"
+    "apiOffline": "API offline — showing demo data",
+    "viewReports": "View reports",
+    "openMembers": "Open member list",
+    "openSavings": "Open savings register",
+    "openLoans": "Open loan applications",
+    "openBranches": "Open branch register",
+    "quickActions": "Quick actions",
+    "qaAdmission": "New member",
+    "qaCollection": "Collection sheet",
+    "qaLoan": "New loan",
+    "qaCenter": "Samities / centers",
+    "qaOverdue": "Overdue cases",
+    "qaAccounting": "Accounting"
   },
   "common": {
     "loading": "Loading…",
     "error": "Something went wrong",
     "retry": "Try again",
     "language": "Language",
-    "comingSoon": "This module is coming soon",
-    "underConstruction": "This page is under construction. The route is ready for the module.",
     "menu": "Menu",
     "more": "More",
     "close": "Close",
