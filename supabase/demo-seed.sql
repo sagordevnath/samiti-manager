@@ -1,5 +1,9 @@
 -- ═════════════════════════════════════════════════════════════════════════════
 -- demo-seed.sql — Samity Manager demo dataset (compact)
+--   NOTE: this is the COMPACT core dataset. For the FULL dataset (login user
+--   admin@samity.test + every module: collection, delinquency, welfare,
+--   governance, programs, comms, docs, security, meetings, working areas), use
+--   supabase/demo-seed-full.sql instead — it is the recommended file.
 -- ─────────────────────────────────────────────────────────────────────────────
 -- HOW TO RUN
 --   Supabase Dashboard → SQL Editor → New query → paste this whole file → Run.

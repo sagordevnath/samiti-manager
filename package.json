@@ -37,7 +37,8 @@
     "test": "npm run test --workspaces --if-present",
     "db:migrate": "npm run db:migrate -w @samity/api",
     "db:seed": "npm run db:seed -w @samity/api",
-    "db:types": "npm run db:types -w @samity/api"
+    "db:types": "npm run db:types -w @samity/api",
+    "db:demo-user": "node --env-file=.env scripts/ensure-demo-user.mjs"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.44.0",

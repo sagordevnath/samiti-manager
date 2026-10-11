@@ -1,154 +1,179 @@
 # Demo data & live database mode
 
 The backend ships with two modes. Which one you get is decided **only** by the
-Supabase env values in `apps/api/.env` (see `apps/api/src/lib/demo.ts`):
+Supabase env values in root `.env` (see `apps/api/src/lib/demo.ts`):
 
 | Mode | Trigger | Data source |
 |---|---|---|
-| **Demo mode** | `SUPABASE_URL` contains `placeholder` **or** `SUPABASE_SERVICE_ROLE_KEY` = `service-role-placeholder` | In-memory store (restart wipes changes) |
-| **Live mode** | Real project URL + real service-role key | Your Supabase Postgres database |
+| **Demo mode** | `SUPABASE_URL` contains `placeholder` **or** the service key is a known placeholder / too short | In-memory store (restart wipes changes) |
+| **Live mode** | Real project URL + real **service_role** key | Your Supabase Postgres database |
 
-> The mode flips the moment the placeholders are gone — there is no separate
-> flag to set.
+`GET /api/v1/health` reports which mode is active (`"mode": "demo" | "live"`) —
+the web app uses this to decide between the seeded demo session and the login
+page. At boot the API also warns loudly when the service key decodes to a
+**non-service_role** JWT (i.e. the anon key was pasted into the wrong slot —
+the single most common cause of "live pages show no data").
+
+## ⚠️ 0. First: make sure the service key is the real one
+
+Open **Supabase Dashboard → Project Settings → API keys** and copy the
+**service_role** secret (legacy JWT, payload contains `"role":"service_role"`,
+or the new opaque `sb_secret_…` key) into root `.env`:
+
+```
+SUPABASE_SERVICE_ROLE_KEY=<service_role secret — NOT the anon key>
+```
+
+The legacy **anon** JWT and the service_role JWT look almost identical (both
+long `eyJ…` tokens) — check the middle segment: it literally contains
+`"role":"anon"` or `"role":"service_role"`. With the anon key in place the API
+boots, login works, but **every database read returns 0 rows** (RLS blocks
+anon) — pages look "broken" even with a fully seeded database.
 
 ## 1. Run the migrations
 
 **Easiest path — one paste.** Open **`supabase/bootstrap-fresh.sql`** in the
 SQL Editor and run it. It contains, in order: reset-all (drops every object),
-all 57 migrations (with the fixes below), and the demo seed. If anything fails
-the editor rolls back the entire batch and shows the exact error — you never
-end up half-migrated.
+all 58 migrations, and the **full** demo seed (login user + every module). If
+anything fails the editor rolls back the entire batch and shows the exact
+error.
 
-> Alternatively run every file in `supabase/migrations/` one at a time in
-> filename order (`0001_core.sql` → `0057_security_rls.sql`), then
-> `demo-seed.sql`. Because the SQL editor runs each file as a single
-> transaction, **one failing statement rolls back that whole file silently** —
-> the missing-object errors you might see later (`relation "members" does not
-> exist`, `relation "audit_records" does not exist`) mean an earlier file
-> died. Known historical blockers, now fixed in the migration files:
->
-> - `0007` re-created the `samities` table that `0001` already created
->   (fixed: now `create table if not exists` + additive `alter table ... add
->   column if not exists` for the module's own columns),
-> - `0008` re-created two RLS policies from `0002` (fixed: guarded with
->   `drop policy if exists`),
-> - `0028`'s child tables referenced `gl_accounts(code)`, which was not
->   unique (fixed: unique index `gl_accounts_code_key` added in `0028`),
-> - `0056`'s audit-trigger loop aborted the whole security module if any of
->   its 14 target tables was missing (fixed: `to_regclass` guard — audit
->   coverage degrades gracefully instead of failing the file).
+> Alternative: run every file in `supabase/migrations/` one at a time in
+> filename order (`0001_core.sql` → `0058_collection_live_fixes.sql`), then the
+> seed (step 2). If a migration fails its transaction rolls back silently —
+> later `relation … does not exist` errors point at the file that died.
 
-## 2. Load the demo dataset
+## 2. Load the demo dataset (pick ONE path)
 
-**Recommended — one command from this repo.** With the real `service_role` key
-in `.env`, run:
+### Path A — SQL Editor (recommended, no service key needed)
+
+Paste **`supabase/demo-seed-full.sql`** into the SQL Editor and run. One paste
+gives you:
+
+- **Login user** `admin@samity.test` / `Samity@2026` (super_admin, demo org) —
+  created in `auth.users` via pgcrypto + its `users_profile` row;
+- 1 org · zone · 2 areas · 3 branches · 3 samities · 2 groups · 12 members
+  (+ nominees, admissions, attendance, notes, consents) · working areas ·
+  branch cash limits;
+- 12 savings accounts with a consistent ledger, interest + withdrawal entries;
+- share allotments, approved dividend declaration + payments, reconciliation
+  run;
+- 5 loan applications: 4 disbursed with full weekly schedules (42/28/21/7 days
+  past due on the four active loans) + 1 in review + 1 submitted;
+- 25 weekly collection entries + receipt counters + 3 cash handovers;
+- full accounting (GL chart, event mappings, vouchers, journal postings, cash
+  book, petty cash, bank reconciliation, fund requisition, budgets);
+- full HR (staff, salary structures, recruitment, attendance, leave, holidays,
+  transfer order, approved September payroll, PF ledger, KPI, appraisal,
+  disciplinary case);
+- full work module (targets, tasks incl. an overdue follow-up, delegation,
+  supervision, audit plan + findings, branch-opening proposal, escalation);
+- full delinquency set (settings, open cases, follow-ups — reminder tasks are
+  created by trigger — early-warning signals, root cause);
+- welfare fund rules + requests + ledger; credit life + micro-insurance +
+  claim; dividend distribution + AGM records + member exit;
+- programs (2 projects, budget, logframe, beneficiaries, activities) + ops
+  (expenses, field visit, sensitive case, funding source + repayments);
+- communication (templates, deliveries, notifications, opt-out, rules, spend);
+- documents (templates incl. sadhu register, versions, generated documents with
+  public verify codes, bulk job) — try `/verify/DEMO-VERIFY-0001-…`;
+- security (config, retention rules, correction request).
+
+Everything is idempotent (fixed UUIDs + `on conflict do nothing`); re-running
+is safe. For a from-zero reset run `supabase/reset-all.sql` first (never delete
+from `audit_records` or `savings_transactions` yourself — they are
+append-only by trigger).
+
+### Path B — REST seeder (needs the working service key)
 
 ```bash
-node scripts/seed-demo.mjs
+node --env-file=.env scripts/seed-demo.mjs
 ```
 
-It seeds over the REST API (no SQL Editor needed), is idempotent, and creates
-more than the SQL file: a savings account + opening deposit for **every**
-member, **four active (disbursed) loans** with full repayment schedules (one
-deliberately 42 days overdue → delinquency case/worklist data), one pending
-application for the pipeline, a full **Accounting / HR / Work / Delinquency**
-starter set (GL chart, approved vouchers, cash book, petty cash, bank rec,
-requisition, budgets; staff + salary structures + an approved September
-payroll; October targets, tasks, audit plan + findings; delinquency settings,
-case, follow-ups, early-warning signal), and a working login user
-(**admin@samity.test / Samity@2026**, super_admin on the demo org). If the
-service key cannot write (e.g. the anon key was pasted by mistake), the script
-says so clearly instead of half-seeding.
+Seeds the core dataset over the REST API (org → loans → accounting → HR → work
+→ delinquency) **and** creates the same login user through Supabase Auth's
+admin API. The script refuses to run when it detects the anon key in the
+service-key slot, and accepts both legacy service_role JWTs and new
+`sb_secret_…` keys.
 
-**SQL Editor path.** Paste **`supabase/demo-seed.sql`** into the SQL Editor
-and run it. It is idempotent — re-running never duplicates rows.
+### Path C — create just the login user (Admin API, always works)
 
-> Alternative: `npm run db:seed -w @samity/api` (`apps/api/src/scripts/seed.ts`)
-> seeds a *minimal* dataset and creates real Supabase Auth users, but requires
-> a direct `SUPABASE_DB` connection string. For the full demo dataset the SQL
-> file above is the recommended path.
+If the SQL seed loaded your data but login still says **"incorrect email or
+password"**, the `auth.users` insert was rejected by your project's auth schema
+and the demo user was never created. Fix it without touching the schema:
 
-What `scripts/seed-demo.mjs` loads (the SQL file below is a smaller subset):
-
-| Area | Rows |
-|---|---|
-| Org structure | 1 org, 1 zone, 2 areas, 2 active + 1 planned branch, 3 samities, 2 groups |
-| Members | 12 members (MEM-DEMO-001…012), 2 groups |
-| Savings | 2 products, 12 accounts (one per member), 12 opening transactions |
-| Loans | 1 policy, 3 products, 5 applications: 4 disbursed + full weekly schedules (future installments due), 1 pending in review |
-| Accounting | 9-account GL chart, 6 event→journal mappings, 3 approved vouchers + 6 lines, 2 auto-postings, open cash-book day, petty cash, bank rec + statement line, fund requisition, 3 October budget lines |
-| HR | 4 staff, 3 salary structures, 1 vacancy + 2 applicants, attendance, 2 leave requests, 2 holidays, 1 transfer order, approved September payroll run + 4 lines, PF ledger, KPI + appraisal, 1 disciplinary case |
-| Work | 3 October targets (branch + officer split), 4 tasks (1 overdue, 1 done), 1 delegation, supervision submission, audit plan + 2 findings, 1 proposed branch opening, 1 escalation |
-| Delinquency | settings, 2 collection entries, 1 open case (42 DPD), 2 follow-ups (reminder tasks auto-created by trigger), 1 early-warning signal, 1 root cause |
-| Auth | login user admin@samity.test / Samity@2026 (super_admin) — created first; its real id fills every created_by/prepared_by column |
-
-Safety notes:
-
-- **Auth users:** the SQL demo-seed needs **no** `auth.users` rows (every
-  user-referencing column is NULL). The REST script does the opposite: it
-  creates the real login user **first** and threads its id through every
-  `created_by`/`prepared_by` column, so vouchers, payroll and audit trails
-  show a proper name. The API's service-role client bypasses RLS either way.
-- Two guarded `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` statements add
-  `members.samity_name` and `members.deleted_by`, which the live API reads but
-  no migration defines yet.
-- Fixed UUIDs mean the web demo session ids (`…0aa` org, `…0b1` branch) match
-  the seeded org/branch.
-
-## 3. Point the API at the project
-
-Fill the real values in `apps/api/.env` (copy from `.env.example`):
-
-```
-SUPABASE_URL=https://<project-ref>.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=<service-role key>   # NOT the anon key
-SUPABASE_JWT_SECRET=<jwt secret>               # Settings → API → JWT Settings
+```bash
+node --env-file=.env scripts/ensure-demo-user.mjs
+# custom password:
+node --env-file=.env scripts/ensure-demo-user.mjs 'MyNewPass1!'
 ```
 
-The API now boots in live mode — every mounted router
-(`members`, `samities`, `org`, `savings`, `loans`, …) reads these tables.
+It creates `admin@samity.test` through Supabase's Admin API (so the password
+hash and `auth.identities` row are exactly what GoTrue expects), upserts the
+matching `users_profile` row, and finally proves the credentials by calling the
+same token endpoint the browser uses. Idempotent — an existing user is reused.
 
-> **Login:** with real env values the `/auth/login` route verifies passwords
-> against Supabase Auth (`auth.users`). The web app's seeded demo token only
-> exists in demo mode. Until you create a real user, either keep using demo
-> mode or create a user in Supabase Auth and add `app_metadata` claims
-> (`role`, `org_id`, `branch_id`) as described in
-> `docs/go-live.md`. In demo mode you can also use the field-officer session
-> by logging in with any credentials — the web seeds the demo super_admin
-> session regardless.
+(`supabase/demo-seed.sql` is the old compact core subset — kept for quick
+tests, but Path A covers every screen.)
+
+## 3. Start the app and sign in
+
+```bash
+# API
+cd apps/api && PORT=4001 npm run dev      # or node ../../node_modules/tsx/dist/cli.mjs src/server.ts
+# Web
+cd apps/web && npm run dev
+```
+
+- **Live mode:** the app opens on `/login` with the demo credentials
+  prefilled — press **Sign in** (they exist once step 2 ran). The session is a
+  real Supabase JWT; role/org come from the user's `app_metadata` claims or,
+  as fallback, the seeded `users_profile` row.
+- **Demo mode** (placeholder env): no login wall — the app seeds the demo
+  super_admin session automatically. `/login` also works there (the API serves
+  the demo session for the same credentials).
+- A stale/expired token anywhere lands back on `/login` automatically.
 
 ## 4. Verify
 
 ```bash
-curl http://localhost:4000/api/v1/health
-curl http://localhost:4000/api/v1/members -H "Authorization: Bearer demo-token"
-# → live mode returns the 8 seeded members; demo mode returns in-memory rows
+curl http://localhost:4001/api/v1/health            # → "mode":"live"
+curl http://localhost:4001/api/v1/members -H "Authorization: Bearer <accessToken>"
 ```
 
 ## Where the data shows up
 
 | Web screen | Table(s) |
 |---|---|
-| Dashboard | members, savings_accounts, loans |
-| Members / Member 360 | members, member_nominees, member_notes, savings_accounts, loans |
-| Samities & centers | samities, groups, group_members |
+| Dashboard | members, savings_accounts, loan_applications, collection_entries |
+| Members / Member 360 | members, member_nominees, member_notes, member_admissions, member_attendance, savings_accounts, loan_applications |
+| Samities & centers | samities, groups, group_members, samity_leaders, samity_meetings, meeting_attendance |
 | Savings | savings_products, savings_accounts, savings_transactions |
-| Loans | loan_policies, loan_products, loan_applications, loan_disbursements, loan_repayment_schedule, loan_installments |
-| Org structure / map | zones, areas, branches, working_areas |
+| Shares | share_allotments, dividend_declarations, dividend_payments, reconciliation_runs |
+| Loans | loan_policies, loan_products, loan_applications, loan_application_steps, loan_disbursements, loan_repayment_schedule, credit_life_policies |
+| Collection | collection_entries, cash_handovers, receipt_counters, v_collection_dashboard |
+| Delinquency | delinquency_settings, delinquency_cases, delinquency_follow_ups, delinquency_tasks (auto), early_warning_signals, delinquency_root_causes |
 | Accounting | gl_accounts, event_journal_mappings, vouchers, voucher_lines, journal_postings, cash_book_days/lines, petty_cash_*, bank_reconciliations, bank_statement_lines, fund_requisitions, gl_budgets |
 | HR | hr_staff, salary_structures, hr_vacancies, hr_applicants, hr_attendance, hr_leave_requests, hr_holidays, hr_movements, payroll_runs, payroll_lines, pf_ledger, kpi_scorecards, staff_appraisals, disciplinary_cases |
-| Work | work_targets, work_tasks, task_delegations, supervision_submissions, audit_plans, audit_findings, branch_openings, work_escalations |
-| Delinquency | delinquency_settings, delinquency_cases, delinquency_follow_ups, delinquency_tasks, early_warning_signals, delinquency_root_causes, collection_entries |
+| Work | work_targets, work_tasks, task_delegations, supervision_submissions, audit_plans, audit_findings, branch_openings, work_escalations, working_areas |
+| Welfare | welfare_fund_rules, welfare_requests, welfare_ledger, micro_insurance_products, micro_enrollments, insurance_claims |
+| Governance | dividend_distributions, dividend_lines, agm_records, member_exits |
+| Programs / Ops | projects, project_budget_lines, logframe_entries, indicator_values, beneficiaries, program_enrollments, program_services, program_activities, project_expenses, field_visits, funding_sources, funding_repayments, cases |
+| Reports / MIS | computed from the tables above |
+| Comms | message_templates, message_deliveries, notifications, comm_opt_outs, comm_rules, comm_spend |
+| Documents | doc_templates, doc_template_versions, documents, bulk_jobs, bulk_job_items |
+| Security | security_config, retention_rules, member_consents, member_corrections, audit_records (auto), unmask_log |
+| Org structure / map | zones, areas, branches, branch_cash_limits, working_areas, branch_openings |
 
 ## Troubleshooting
 
 | Symptom | Cause / fix |
 |---|---|
-| API still serves restart-volatile demo data | `SUPABASE_URL` still contains `placeholder` or the service key is still `service-role-placeholder` — recheck `apps/api/.env` |
-| `cannot drop type … because other objects depend on it` (2BP01) when running reset/bootstrap | Older reset ran without `cascade`; current files drop everything with `cascade`, making order irrelevant. Re-paste the latest `bootstrap-fresh.sql` |
-| `relation "members" does not exist` when running the seed | Migrations never landed — an earlier migration file failed and its transaction rolled back. Run `supabase/reset-all.sql` once, then re-run migrations **one file at a time** (step 1) |
-| `relation "audit_records" does not exist` at 0057 | `0056` rolled back (it hard-required 14 audit tables; now `to_regclass`-guarded). Use `bootstrap-fresh.sql` and the batch's error message will name the real culprit |
-| `relation "zones" does not exist` | Migrations weren't run (or not in order) before the seed |
-| `null value in column "account_number"` | Pre-0009 rows exist without account numbers — run `0009_savings_module.sql` again; its backfill covers them |
-| Members screen empty in live mode | RLS requires an authenticated role; the service-role bypass only applies server-side. Log in with a real Supabase Auth user, or stay in demo mode |
-| Seed writes fail with `42501 new row violates row-level security` | The `.env` holds the **anon** key, not `service_role` (reads work, writes fail). Paste the real service-role key and re-run |
+| **Live pages show no data even after seeding** | The `.env` service key is the **anon** key (payload `role":"anon"`). The API log warns about it at boot. Paste the real service_role key and restart |
+| Login returns "Incorrect email or password" | The seed's auth-user step didn't run (or the password differs). Re-run `demo-seed-full.sql`, or create the user via `scripts/seed-demo.mjs` |
+| Login works but pages are empty | See first row — login only needs the anon key, data reads need service_role |
+| API still serves restart-volatile demo data | `SUPABASE_URL` still contains `placeholder` or the service key is still `service-role-placeholder` |
+| `cannot drop type … because other objects depend on it` (2BP01) on reset | Older reset ran without `cascade`; re-paste the latest `bootstrap-fresh.sql` |
+| `relation "…" does not exist` when seeding | Migrations never landed — an earlier migration file failed. Run `bootstrap-fresh.sql` and read its error |
+| Seed writes fail with `42501 new row violates row-level security` | The seeder is using the anon key — paste the real service_role key |
+| Pages show old numbers after re-seeding | Idempotent seed keeps existing rows; run `reset-all.sql` first for a clean slate |

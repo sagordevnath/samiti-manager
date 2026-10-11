@@ -66,9 +66,16 @@ function legacyJwt(role, extra = {}) {
 }
 
 let bearer;
-if (claimedService && roleOf(claimedService) === 'service_role') {
-  bearer = claimedService; // real service key — best case
+if (claimedService && claimedService.startsWith('sb_secret_')) {
+  bearer = claimedService; // new-format opaque service key — best case
+  console.log('bearer: sb_secret_ service key from env');
+} else if (claimedService && roleOf(claimedService) === 'service_role') {
+  bearer = claimedService; // legacy service_role JWT — best case
   console.log('bearer: real service_role key from env');
+} else if (claimedService && roleOf(claimedService) === 'anon') {
+  console.error('✗ SUPABASE_SERVICE_ROLE_KEY decodes to role=anon — the ANON key was pasted into the service-role slot.');
+  console.error('  Every read would be RLS-locked to 0 rows. Paste the service_role key from Supabase Dashboard → Project Settings → API keys.');
+  process.exit(3);
 } else if (secret) {
   bearer = legacyJwt('service_role');
   console.log('bearer: minted service_role JWT (legacy secret path)');
