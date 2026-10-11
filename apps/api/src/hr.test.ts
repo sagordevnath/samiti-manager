@@ -340,3 +340,147 @@ describe('HR transfer & promotion (req 4)', () => {
     expect(badBranchPromotion.status).toBe(400);
   });
 });
+
+describe('HR correction paths (edit + remove)', () => {
+  const del = (url: string) => request(createAppRef() as never).delete(url).set(auth);
+
+  it('edits a staff record without touching its encryption', async () => {
+    const r = await patch(`/api/v1/hr/staff/${FIELD_OFFICER}`, { mobile: '01700000000', monthlyGross: '17000.00' });
+    expect(r.status).toBe(200);
+    expect(r.body.mobile).toBe('01700000000');
+    expect(r.body.monthlyGross).toBe('17000.00');
+    // The seeded mask survives an edit that does not carry a new NID.
+    expect(r.body.nidEnc).toBeNull();
+    expect(r.body.nidMasked).toBe('4567');
+
+    const list = await get('/api/v1/hr/staff?q=Kamal');
+    expect(list.body.items[0].mobile).toBe('01700000000');
+  });
+
+  it('re-encrypts a corrected NID and returns only the mask', async () => {
+    const r = await patch(`/api/v1/hr/staff/${FIELD_OFFICER}`, { nid: '1234567890123' });
+    expect(r.status).toBe(200);
+    expect(r.body.nidEnc).toBeNull();
+    expect(r.body.nidMasked).toBe('0123');
+  });
+
+  it('rejects an invalid staff edit before the store is touched', async () => {
+    const before = (await get(`/api/v1/hr/staff/${FIELD_OFFICER}`)).body;
+    const r = await patch(`/api/v1/hr/staff/${FIELD_OFFICER}`, { mobile: '12345' });
+    expect(r.status).toBe(400);
+    const after = (await get(`/api/v1/hr/staff/${FIELD_OFFICER}`)).body;
+    expect(after.mobile).toBe(before.mobile);
+  });
+
+  it('removes a staff record and hides it from every read', async () => {
+    const before = await get('/api/v1/hr/staff');
+    expect(before.body.items).toHaveLength(3);
+
+    expect((await del(`/api/v1/hr/staff/${FIELD_OFFICER}`)).status).toBe(204);
+    expect((await get(`/api/v1/hr/staff/${FIELD_OFFICER}`)).status).toBe(404);
+
+    const after = await get('/api/v1/hr/staff');
+    expect(after.body.items).toHaveLength(2);
+    expect(after.body.items.map((s: { id: string }) => s.id)).not.toContain(FIELD_OFFICER);
+    // Its posting history goes with it (the demo store has no soft delete).
+    expect(after.body.items.some((s: { name: string }) => s.name === 'Kamal Hossain')).toBe(false);
+  });
+
+  it('404s when removing an unknown staff record', async () => {
+    expect((await del('/api/v1/hr/staff/00000000-0000-4000-8000-000000000fff')).status).toBe(404);
+    expect((await get('/api/v1/hr/staff')).body.items).toHaveLength(3);
+  });
+
+  it('edits a requested vacancy and leaves decided fields alone', async () => {
+    const created = await post('/api/v1/hr/vacancies', {
+      branchId: DHAKA,
+      designation: 'account_officer',
+      headcount: 1,
+      reason: 'Typo — wrong headcount',
+    });
+    expect(created.status).toBe(201);
+
+    const r = await patch(`/api/v1/hr/vacancies/${created.body.id}`, { headcount: 3, reason: 'Two resignations' });
+    expect(r.status).toBe(200);
+
+    const list = await get('/api/v1/hr/vacancies');
+    const found = list.body.items.find((v: { id: string }) => v.id === created.body.id);
+    expect(found.headcount).toBe(3);
+    expect(found.reason).toBe('Two resignations');
+    expect(found.status).toBe('requested');
+    expect(found.designation).toBe('account_officer');
+  });
+
+  it('refuses to edit a rejected vacancy', async () => {
+    const created = await post('/api/v1/hr/vacancies', {
+      branchId: DHAKA,
+      designation: 'accountant',
+      headcount: 1,
+      reason: 'Never needed this post',
+    });
+    await post(`/api/v1/hr/vacancies/${created.body.id}/decision`, { decision: 'reject' });
+
+    const r = await patch(`/api/v1/hr/vacancies/${created.body.id}`, { headcount: 4 });
+    expect(r.status).toBe(409);
+
+    const list = await get('/api/v1/hr/vacancies');
+    expect(list.body.items.find((v: { id: string }) => v.id === created.body.id).headcount).toBe(1);
+  });
+
+  it('will not withdraw a vacancy that still has applicants', async () => {
+    const r = await del(`/api/v1/hr/vacancies/${VACANCY}`);
+    expect(r.status).toBe(409);
+    expect(r.body.error.message).toContain('2 applicant');
+
+    const list = await get('/api/v1/hr/vacancies');
+    expect(list.body.items.map((v: { id: string }) => v.id)).toContain(VACANCY);
+  });
+
+  it('withdraws an applicant-free vacancy', async () => {
+    const created = await post('/api/v1/hr/vacancies', {
+      branchId: DHAKA,
+      designation: 'accountant',
+      headcount: 1,
+      reason: 'Raised against the wrong branch',
+    });
+
+    expect((await del(`/api/v1/hr/vacancies/${created.body.id}`)).status).toBe(204);
+    const list = await get('/api/v1/hr/vacancies');
+    expect(list.body.items.map((v: { id: string }) => v.id)).not.toContain(created.body.id);
+  });
+
+  it('edits an applicant’s own details but never their status', async () => {
+    const r = await patch(`/api/v1/hr/applicants/${APPLICANT_A}`, {
+      name: 'Rahima Akter',
+      mobile: '01799999999',
+      experienceYears: 4,
+      status: 'joined',
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.name).toBe('Rahima Akter');
+    expect(r.body.mobile).toBe('01799999999');
+    expect(r.body.experienceYears).toBe(4);
+    // Workflow state is changed through its own endpoint, not a bulk edit.
+    expect(r.body.status).toBe('shortlisted');
+  });
+
+  it('rejects an invalid applicant mobile', async () => {
+    const r = await patch(`/api/v1/hr/applicants/${APPLICANT_A}`, { mobile: '12345' });
+    expect(r.status).toBe(400);
+  });
+
+  it('removes an applicant, and blocks the one who has joined', async () => {
+    const before = await get('/api/v1/hr/applicants');
+    expect(before.body.items).toHaveLength(2);
+
+    expect((await del(`/api/v1/hr/applicants/${APPLICANT_A}`)).status).toBe(204);
+    const after = await get('/api/v1/hr/applicants');
+    expect(after.body.items.map((a: { id: string }) => a.id)).not.toContain(APPLICANT_A);
+
+    const joined = '00000000-0000-4000-8000-0000000000b2';
+    await patch(`/api/v1/hr/applicants/${joined}/status`, { status: 'joined' });
+    expect((await patch(`/api/v1/hr/applicants/${joined}`, { name: 'Renamed' })).status).toBe(409);
+    expect((await del(`/api/v1/hr/applicants/${joined}`)).status).toBe(409);
+    expect((await get('/api/v1/hr/applicants')).body.items.map((a: { id: string }) => a.id)).toContain(joined);
+  });
+});
