@@ -37,6 +37,29 @@ export function isDemoMode(): boolean {
   );
 }
 
+/**
+ * True when the configured service key is a JWT whose role claim is NOT
+ * 'service_role' — typically the anon key pasted into the service-role slot
+ * (both are long legacy JWTs, so the length check above cannot catch it).
+ * The API still boots, but every service-client query is RLS-locked to zero
+ * rows, which looks exactly like "no data in the live pages". Opaque new-format
+ * keys (sb_secret_…) have no role claim and are fine.
+ */
+export function serviceKeyLooksMisconfigured(): boolean {
+  const parts = env.SUPABASE_SERVICE_ROLE_KEY.trim().split('.');
+  if (parts.length !== 3) return false; // not a legacy JWT — sb_secret_ etc.
+  const payloadB64 = parts[1];
+  if (!payloadB64) return false;
+  try {
+    const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8')) as {
+      role?: unknown;
+    };
+    return typeof payload.role === 'string' && payload.role !== 'service_role';
+  } catch {
+    return false;
+  }
+}
+
 /** The bearer token the web app seeds in demo mode. */
 export const DEMO_TOKEN = 'demo-token';
 

@@ -52,13 +52,22 @@ function attachAuth(req: RequestWithAuth, payload: TokenPayload): void {
   const role: Role = ROLES.includes(roleClaim as Role) ? (roleClaim as Role) : 'member';
   const metaPermissions = Array.isArray(meta['app_permissions']) ? (meta['app_permissions'] as Permission[]) : undefined;
 
+  // Supabase-issued tokens carry `app_permissions: []` when no custom claims
+  // were minted. An empty array means "no explicit grants", NOT "grant
+  // nothing" — otherwise the role's default set (and every role-gated route
+  // that reads auth.permissions, e.g. GET /nav) would silently resolve to zero
+  // permissions. Only a non-empty claim overrides the role defaults.
+  const claimedPermissions =
+    (payload.app_permissions?.length ? payload.app_permissions : undefined) ??
+    (metaPermissions?.length ? metaPermissions : undefined);
+
   req.auth = {
     userId: payload.sub,
     email: payload.email ?? '',
     role,
     orgId: payload.org_id ?? (meta['org_id'] as string | undefined) ?? null,
     branchId: payload.branch_id ?? (meta['branch_id'] as string | undefined) ?? null,
-    permissions: payload.app_permissions ?? metaPermissions ?? permissionsForRole(role),
+    permissions: claimedPermissions ?? permissionsForRole(role),
     locale: payload.locale === 'en' ? 'en' : 'bn',
   };
 }
@@ -106,7 +115,7 @@ export function requireAuth(req: RequestWithAuth, _res: Response, next: NextFunc
   // Asymmetric-key path: look the token's `kid` up in the project JWKS.
   void (async () => {
     try {
-      const [, rawPayload, , rawHeader] = token.split('.');
+      const [rawHeader, rawPayload] = token.split('.');
       if (!rawHeader || !rawPayload) throw new Error('malformed token');
       const header = JSON.parse(Buffer.from(rawHeader, 'base64url').toString('utf8')) as { kid?: string; alg?: string };
       const keys = await fetchJwks();

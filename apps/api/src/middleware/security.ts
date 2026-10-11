@@ -157,7 +157,7 @@ export function sessionTimeoutMiddleware(req: Request, res: Response, next: Next
  *  - Origin present + unknown  → 403 (cross-site request, CSRF).
  *  - No Origin (curl/tests)    → allowed (non-browser client).
  */
-export function csrfGuard(allowedOrigins: readonly string[]) {
+export function csrfGuard(isAllowed: (origin: string) => boolean) {
   return (req: Request, _res: Response, next: NextFunction): void => {
     const method = req.method.toUpperCase();
     if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
@@ -169,7 +169,7 @@ export function csrfGuard(allowedOrigins: readonly string[]) {
       next();
       return;
     }
-    if (!allowedOrigins.includes(origin)) {
+    if (!isAllowed(origin)) {
       next(new AppError(403, 'FORBIDDEN', 'ক্রস-সাইট অনুরোধ বাতিল / Cross-site request rejected (CSRF)'));
       return;
     }

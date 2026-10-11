@@ -20,7 +20,14 @@ if (existsSync(apiEnvPath)) dotenv.config({ path: apiEnvPath });
 if (existsSync(rootEnvPath)) dotenv.config({ path: rootEnvPath });
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  PORT: z.preprocess((v) => (v === '' || v == null ? undefined : v), z.coerce.number().int().positive().default(4000)),
+  // Some shells/tool runners export PORT=0 (or an empty value) for their own
+  // purposes. That is not a usable listen port, so fall back to the default
+  // instead of refusing to boot — a genuinely wrong non-numeric value still
+  // fails validation below.
+  PORT: z.preprocess(
+    (v) => (v === '' || v == null || Number(v) <= 0 ? undefined : v),
+    z.coerce.number().int().positive().default(4000),
+  ),
   CORS_ORIGINS: z
     .string()
     .default('http://localhost:5173,http://localhost:5174')
@@ -51,3 +58,17 @@ if (!parsed.success) {
 
 export const env = parsed.data;
 export const isProd = env.NODE_ENV === 'production';
+
+/**
+ * Dev convenience: any loopback origin on any port counts as same-site for
+ * CORS and the CSRF guard. Without this, the browser's login POST is rejected
+ * as "cross-site" whenever Vite serves on a port that is not in CORS_ORIGINS
+ * (e.g. 5175) — which looks exactly like "incorrect email or password".
+ * Production still honours the explicit CORS_ORIGINS allow-list only.
+ */
+const LOOPBACK_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
+
+export function isAllowedOrigin(origin: string): boolean {
+  if (env.CORS_ORIGINS.includes(origin)) return true;
+  return env.NODE_ENV !== 'production' && LOOPBACK_ORIGIN.test(origin);
+}
