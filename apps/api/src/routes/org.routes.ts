@@ -25,6 +25,7 @@ import { requireAuth, requirePermission, type RequestWithAuth } from '../middlew
 import { asyncHandler } from '../middleware/error.js';
 import { validate } from '../middleware/validate.js';
 import { supabaseAdmin } from '../lib/supabase.js';
+import { scopeToOrg } from '../lib/tenant.js';
 
 export const orgRouter = Router();
 
@@ -36,6 +37,7 @@ orgRouter.use(requireAuth);
 function authOf(req: RequestWithAuth) {
   return (req as RequestWithAuth).auth!;
 }
+
 
 /** Branch scope check: area managers may only touch branches under their areas (demo: org-wide). */
 function assertBranchScope(_req: RequestWithAuth, _branchOrgId: string): void {
@@ -411,7 +413,7 @@ orgRouter.post(
     if (!['org_admin', 'super_admin'].includes(auth.role)) {
       throw Forbidden('Only Director Operations (org_admin) may approve');
     }
-    const { data, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from('branch_openings')
       .update({
         stage: body.decision === 'reject' ? 'rejected' : 'director_approved',
@@ -420,9 +422,9 @@ orgRouter.post(
         director_by: auth.userId,
       })
       .eq('id', id)
-      .eq('stage', 'proposed')
-      .select('*')
-      .single();
+      .eq('stage', 'proposed');
+    query = scopeToOrg(query, req as RequestWithAuth);
+    const { data, error } = await query.select('*').single();
     if (error || !data) throw NotFound('Opening not found or wrong stage');
     res.json({ opening: data });
   }),
@@ -454,13 +456,13 @@ orgRouter.post(
       return;
     }
 
-    const { data, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from('branch_openings')
       .update({ checklist: body.items, checklist_at: new Date().toISOString(), checklist_by: auth.userId, stage: 'checklist_done' })
       .eq('id', id)
-      .eq('stage', 'director_approved')
-      .select('*')
-      .single();
+      .eq('stage', 'director_approved');
+    query = scopeToOrg(query, req as RequestWithAuth);
+    const { data, error } = await query.select('*').single();
     if (error || !data) throw NotFound('Opening not found or wrong stage');
     res.json({ opening: data });
   }),
@@ -490,16 +492,19 @@ orgRouter.post(
     if (!['org_admin', 'super_admin'].includes(auth.role)) {
       throw Forbidden('Only Director Operations may activate');
     }
-    const { data: opening, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from('branch_openings')
       .update({ stage: 'activated', activated_at: new Date().toISOString(), activated_by: auth.userId })
       .eq('id', id)
-      .eq('stage', 'checklist_done')
-      .select('*')
-      .single();
+      .eq('stage', 'checklist_done');
+    query = scopeToOrg(query, req as RequestWithAuth);
+    const { data: opening, error } = await query.select('*').single();
     if (error || !opening) throw NotFound('Opening not found or wrong stage');
 
-    await supabaseAdmin.from('branches').update({ status: 'active' }).eq('id', (opening as { branch_id: string }).branch_id);
+    await scopeToOrg(supabaseAdmin.from('branches').update({ status: 'active' }), req as RequestWithAuth).eq(
+      'id',
+      (opening as { branch_id: string }).branch_id,
+    );
     res.json({ opening });
   }),
 );
@@ -735,13 +740,13 @@ orgRouter.post(
       return;
     }
 
-    const { data, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from('working_areas')
       .update({ branch_id: body.branchId })
       .eq('id', id)
-      .is('deleted_at', null)
-      .select('*')
-      .single();
+      .is('deleted_at', null);
+    query = scopeToOrg(query, req as RequestWithAuth);
+    const { data, error } = await query.select('*').single();
     if (error || !data) throw NotFound('Village not found');
     res.json({ village: data });
   }),

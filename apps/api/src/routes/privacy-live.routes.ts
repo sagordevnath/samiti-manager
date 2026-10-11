@@ -23,12 +23,12 @@ import { requireAuth, requirePermission, type RequestWithAuth } from '../middlew
 import { asyncHandler } from '../middleware/error.js';
 import { validate } from '../middleware/validate.js';
 import { supabaseAdmin } from '../lib/supabase.js';
+import { orgOf } from '../lib/tenant.js';
 import { setProtectedFieldLive } from './documents-live.routes.js';
 
 export const privacyLiveRouter = Router();
 privacyLiveRouter.use(requireAuth);
 
-const orgOf = (req: RequestWithAuth) => req.auth!.orgId ?? '';
 const viewerOf = (req: RequestWithAuth) => ({ userId: req.auth?.userId ?? 'unknown', userName: req.auth?.email ?? 'unknown', role: req.auth?.role ?? 'member' });
 
 /* ── Consents ─────────────────────────────────────────────────────────────── */
@@ -259,6 +259,7 @@ privacyLiveRouter.post(
       .from('member_corrections')
       .update({ status: to, decided_by: viewer.userId, decided_at: now, decision_note: body.note ?? '', updated_at: now })
       .eq('id', data.id)
+      .eq('org_id', orgOf(req))
       .select('id, status, decided_at')
       .single();
     if (updErr) throw updErr;
@@ -293,6 +294,7 @@ privacyLiveRouter.post(
       .from('member_corrections')
       .update({ status: 'applied', applied_at: now, updated_at: now })
       .eq('id', data.id)
+      .eq('org_id', orgOf(req))
       .select('id, status, applied_at')
       .single();
     if (updErr) throw updErr;

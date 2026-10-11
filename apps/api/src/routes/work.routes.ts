@@ -32,16 +32,12 @@ import { requireAuth, requirePermission, type RequestWithAuth } from '../middlew
 import { asyncHandler } from '../middleware/error.js';
 import { validate } from '../middleware/validate.js';
 import { supabaseAdmin } from '../lib/supabase.js';
+import { orgOf, scopeOrg, scopeToOrg } from '../lib/tenant.js';
 
 export const workRouter = Router();
 workRouter.use(requireAuth);
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
-const orgOf = (req: RequestWithAuth) => req.auth!.orgId ?? '';
-const scopeOrg = (req: RequestWithAuth) => {
-  const auth = req.auth!;
-  return Boolean(auth.orgId) && auth.role !== 'super_admin';
-};
 
 /** DB row → WorkTask wire shape (comments come from the jsonb column). */
 function taskWire(row: Record<string, unknown>): WorkTask {
@@ -177,13 +173,13 @@ workRouter.patch(
     if (body.dueDate) patch['due_date'] = body.dueDate;
     if (body.priority) patch['priority'] = body.priority;
     if (body.description) patch['description'] = body.description;
-    const { data, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from('work_tasks')
       .update(patch)
       .eq('id', req.params['id'] as string)
-      .is('deleted_at', null)
-      .select('*')
-      .single();
+      .is('deleted_at', null);
+    query = scopeToOrg(query, req);
+    const { data, error } = await query.select('*').single();
     if (error || !data) throw NotFound('Task not found');
     res.json(taskWire(data as Record<string, unknown>));
   }),
@@ -195,9 +191,7 @@ workRouter.post(
   validate(taskCommentSchema),
   asyncHandler(async (req: RequestWithAuth, res) => {
     const body = req.body as { text: string };
-    const { data: task } = await supabaseAdmin
-      .from('work_tasks')
-      .select('comments')
+    const { data: task } = await scopeToOrg(supabaseAdmin.from('work_tasks').select('comments'), req)
       .eq('id', req.params['id'] as string)
       .maybeSingle();
     if (!task) throw NotFound('Task not found');
@@ -208,9 +202,10 @@ workRouter.post(
       text: body.text,
       createdAt: new Date().toISOString(),
     };
-    const { data: updated, error } = await supabaseAdmin
-      .from('work_tasks')
-      .update({ comments: [...((task.comments as WorkTask['comments']) ?? []), comment] })
+    const { data: updated, error } = await scopeToOrg(
+      supabaseAdmin.from('work_tasks').update({ comments: [...((task.comments as WorkTask['comments']) ?? []), comment] }),
+      req,
+    )
       .eq('id', req.params['id'] as string)
       .select('comments')
       .single();
@@ -283,18 +278,18 @@ workRouter.post(
   validate(taskReassignSchema),
   asyncHandler(async (req: RequestWithAuth, res) => {
     const body = req.body as { toStaffId: string; toStaffName?: string; reason: 'leave' | 'transfer' | 'workload' | 'other'; note?: string };
-    const { data: task } = await supabaseAdmin
-      .from('work_tasks')
-      .select('assignee_id, status')
+    const { data: task } = await scopeToOrg(supabaseAdmin.from('work_tasks').select('assignee_id, status'), req)
       .eq('id', req.params['id'] as string)
       .maybeSingle();
     if (!task) throw NotFound('Task not found');
     if (task.status === 'done' || task.status === 'verified') throw Conflict('Completed tasks cannot be delegated');
     const { data: toStaff } = await supabaseAdmin.from('hr_staff').select('name').eq('id', body.toStaffId).maybeSingle();
-    await supabaseAdmin
-      .from('work_tasks')
-      .update({ assignee_id: body.toStaffId, assignee_name: body.toStaffName ?? toStaff?.name ?? '', updated_at: new Date().toISOString() })
-      .eq('id', req.params['id'] as string);
+    await scopeToOrg(
+      supabaseAdmin
+        .from('work_tasks')
+        .update({ assignee_id: body.toStaffId, assignee_name: body.toStaffName ?? toStaff?.name ?? '', updated_at: new Date().toISOString() }),
+      req,
+    ).eq('id', req.params['id'] as string);
     await supabaseAdmin.from('task_delegations').insert({
       org_id: orgOf(req),
       task_id: req.params['id'] as string,
@@ -314,19 +309,19 @@ workRouter.post(
   requirePermission('member:write'),
   asyncHandler(async (req: RequestWithAuth, res) => {
     const body = req.body as { fromStaffId: string; toStaffId: string; toStaffName?: string; reason: 'leave' | 'transfer' | 'workload' | 'other'; note?: string };
-    const { data: openTasks } = await supabaseAdmin
-      .from('work_tasks')
-      .select('id')
+    const { data: openTasks } = await scopeToOrg(supabaseAdmin.from('work_tasks').select('id'), req)
       .eq('assignee_id', body.fromStaffId)
       .not('status', 'in', '(done,verified)')
       .is('deleted_at', null);
     const ids = (openTasks ?? []).map((t) => t.id);
     if (ids.length > 0) {
       const { data: toStaff } = await supabaseAdmin.from('hr_staff').select('name').eq('id', body.toStaffId).maybeSingle();
-      await supabaseAdmin
-        .from('work_tasks')
-        .update({ assignee_id: body.toStaffId, assignee_name: body.toStaffName ?? toStaff?.name ?? '' })
-        .in('id', ids);
+      await scopeToOrg(
+        supabaseAdmin
+          .from('work_tasks')
+          .update({ assignee_id: body.toStaffId, assignee_name: body.toStaffName ?? toStaff?.name ?? '' }),
+        req,
+      ).in('id', ids);
       await supabaseAdmin.from('task_delegations').insert({
         org_id: orgOf(req),
         task_id: null,
@@ -632,10 +627,10 @@ workRouter.post(
       const { data: members } = await supabaseAdmin.from('members').select('id').limit(500);
       memberSample = pick((members ?? []).map((m) => m.id));
     }
-    await supabaseAdmin
-      .from('audit_plans')
-      .update({ loan_sample: loanSample, member_sample: memberSample, sample_size: n, updated_at: new Date().toISOString() })
-      .eq('id', auditId);
+    await scopeToOrg(
+      supabaseAdmin.from('audit_plans').update({ loan_sample: loanSample, member_sample: memberSample, sample_size: n, updated_at: new Date().toISOString() }),
+      req,
+    ).eq('id', auditId);
     res.json({ loanSample, memberSample });
   }),
 );
@@ -645,10 +640,10 @@ workRouter.post(
   requirePermission('branch:manage'),
   asyncHandler(async (req, res) => {
     const status = (req.body as { status: string }).status;
-    const { error } = await supabaseAdmin
-      .from('audit_plans')
-      .update({ status, updated_at: new Date().toISOString() })
-      .eq('id', req.params['id'] as string);
+    const { error } = await scopeToOrg(
+      supabaseAdmin.from('audit_plans').update({ status, updated_at: new Date().toISOString() }),
+      req,
+    ).eq('id', req.params['id'] as string);
     if (error) throw error;
     res.json({ ok: true, status });
   }),
@@ -723,10 +718,12 @@ workRouter.post(
   validate(findingRespondSchema),
   asyncHandler(async (req, res) => {
     const body = req.body as { response: string; deadline?: string | null };
-    const { error } = await supabaseAdmin
-      .from('audit_findings')
-      .update({ response: body.response, responded_at: new Date().toISOString(), deadline: body.deadline ?? null, status: 'responded' })
-      .eq('id', req.params['id'] as string);
+    const { error } = await scopeToOrg(
+      supabaseAdmin
+        .from('audit_findings')
+        .update({ response: body.response, responded_at: new Date().toISOString(), deadline: body.deadline ?? null, status: 'responded' }),
+      req,
+    ).eq('id', req.params['id'] as string);
     if (error) throw error;
     res.json({ ok: true });
   }),
@@ -738,9 +735,7 @@ workRouter.post(
   validate(findingFollowUpSchema),
   asyncHandler(async (req: RequestWithAuth, res) => {
     const body = req.body as { note: string; close?: boolean };
-    const { data: f } = await supabaseAdmin
-      .from('audit_findings')
-      .select('follow_ups')
+    const { data: f } = await scopeToOrg(supabaseAdmin.from('audit_findings').select('follow_ups'), req)
       .eq('id', req.params['id'] as string)
       .maybeSingle();
     if (!f) throw NotFound('Finding not found');
@@ -752,7 +747,7 @@ workRouter.post(
     } else {
       patch['status'] = 'in_followup';
     }
-    await supabaseAdmin.from('audit_findings').update(patch).eq('id', req.params['id'] as string);
+    await scopeToOrg(supabaseAdmin.from('audit_findings').update(patch), req).eq('id', req.params['id'] as string);
     res.json({ ok: true });
   }),
 );

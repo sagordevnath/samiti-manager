@@ -8,6 +8,7 @@ import { Router } from 'express';
 import {
   applicantCreateSchema,
   applicantStatusSchema,
+  applicantUpdateSchema,
   educationSchema,
   fieldCheckInSchema,
   holidaySchema as hrHolidayInputSchema,
@@ -18,6 +19,7 @@ import {
   staffCreateSchema,
   staffUpdateSchema,
   vacancyCreateSchema,
+  vacancyUpdateSchema,
   vacancyDecisionSchema,
   type Applicant,
 } from '@samity/shared';
@@ -49,10 +51,15 @@ import {
   listHrStaff,
   listHrVacancies,
   offerHrApplicant,
+  removeHrApplicant,
+  removeHrStaff,
+  removeHrVacancy,
   requestHrLeave,
   resetHrDemoStore,
   setHrApplicantStatus,
+  updateHrApplicant,
   updateHrStaff,
+  updateHrVacancy,
 } from '../lib/hr-store.js';
 import { AppError } from '../lib/errors.js';
 import { requireAuth, requirePermission, type RequestWithAuth } from '../middleware/auth.js';
@@ -123,6 +130,19 @@ hrDemoRouter.patch(
   }),
 );
 
+hrDemoRouter.delete(
+  '/staff/:id',
+  requirePermission('org:manage'),
+  asyncHandler(async (req, res) => {
+    try {
+      removeHrStaff(hrDemoStore(), req.params['id'] as string);
+      res.status(204).end();
+    } catch (err) {
+      hrError(err);
+    }
+  }),
+);
+
 hrDemoRouter.post(
   '/staff/:id/confirm',
   requirePermission('org:manage'),
@@ -164,6 +184,32 @@ hrDemoRouter.post(
   asyncHandler(async (req: RequestWithAuth, res) => {
     try {
       res.status(201).json(createHrVacancy(hrDemoStore(), req.body, req.auth!.userId));
+    } catch (err) {
+      hrError(err);
+    }
+  }),
+);
+
+hrDemoRouter.patch(
+  '/vacancies/:id',
+  requirePermission('branch:manage'),
+  validate(vacancyUpdateSchema),
+  asyncHandler(async (req, res) => {
+    try {
+      res.json(updateHrVacancy(hrDemoStore(), req.params['id'] as string, req.body));
+    } catch (err) {
+      hrError(err);
+    }
+  }),
+);
+
+hrDemoRouter.delete(
+  '/vacancies/:id',
+  requirePermission('branch:manage'),
+  asyncHandler(async (req, res) => {
+    try {
+      removeHrVacancy(hrDemoStore(), req.params['id'] as string);
+      res.status(204).end();
     } catch (err) {
       hrError(err);
     }
@@ -213,6 +259,32 @@ hrDemoRouter.patch(
     try {
       const body = req.body as { status: Applicant['status']; offeredSalary?: string | null };
       res.json(setHrApplicantStatus(hrDemoStore(), req.params['id'] as string, body.status, body.offeredSalary));
+    } catch (err) {
+      hrError(err);
+    }
+  }),
+);
+
+hrDemoRouter.patch(
+  '/applicants/:id',
+  requirePermission('branch:manage'),
+  validate(applicantUpdateSchema),
+  asyncHandler(async (req, res) => {
+    try {
+      res.json(updateHrApplicant(hrDemoStore(), req.params['id'] as string, req.body));
+    } catch (err) {
+      hrError(err);
+    }
+  }),
+);
+
+hrDemoRouter.delete(
+  '/applicants/:id',
+  requirePermission('branch:manage'),
+  asyncHandler(async (req, res) => {
+    try {
+      removeHrApplicant(hrDemoStore(), req.params['id'] as string);
+      res.status(204).end();
     } catch (err) {
       hrError(err);
     }

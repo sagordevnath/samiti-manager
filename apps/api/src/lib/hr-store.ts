@@ -8,6 +8,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   DESIGNATION_LABELS_BN,
+  EDITABLE_VACANCY_STATUSES,
   LEAVE_ENTITLEMENTS,
   daysBetweenInclusive,
   deriveAttendanceStatus,
@@ -333,7 +334,24 @@ export function updateHrStaff(store: HrDemoData, id: string, patch: Partial<Staf
     s.bankMasked = patch.bankAccount ? maskBankTail(patch.bankAccount) : null;
   }
   s.updatedAt = new Date().toISOString();
-  return s;
+  // Never hand the ciphertext back: the demo PATCH response goes straight to
+  // the browser, exactly like createHrStaff/getHrStaff already do.
+  return publicStaff(s);
+}
+
+/**
+ * Remove a staff row created by mistake.
+ *
+ * The demo store has no `deleted_at`, so the row (and the postings/education
+ * hanging off it) is spliced out — the demo mirror of the live router's soft
+ * delete, where payroll history forces the row to survive.
+ */
+export function removeHrStaff(store: HrDemoData, id: string): void {
+  const i = store.staff.findIndex((x) => x.id === id);
+  if (i < 0) throw new HrDemoError(404, 'NOT_FOUND', 'Staff not found');
+  store.staff.splice(i, 1);
+  store.postings = store.postings.filter((p) => p.staffId !== id);
+  store.education = store.education.filter((e) => e.staffId !== id);
 }
 
 export function confirmHrStaff(store: HrDemoData, id: string, userId: string): Staff {
@@ -344,7 +362,7 @@ export function confirmHrStaff(store: HrDemoData, id: string, userId: string): S
   s.confirmationDate = todayStr();
   s.updatedAt = new Date().toISOString();
   void userId;
-  return s;
+  return publicStaff(s);
 }
 
 export function addHrEducation(store: HrDemoData, staffId: string, input: { level: string; institution: string; passingYear: number; result: string }): StaffEducation {
@@ -380,6 +398,42 @@ export function createHrVacancy(store: HrDemoData, input: VacancyCreateInput, us
   return vacancy;
 }
 
+/** Correct a mistyped vacancy request (only while it is still live). */
+export function updateHrVacancy(
+  store: HrDemoData,
+  id: string,
+  patch: Partial<VacancyCreateInput>,
+): Vacancy {
+  const v = store.vacancies.find((x) => x.id === id);
+  if (!v) throw new HrDemoError(404, 'NOT_FOUND', 'Vacancy not found');
+  if (!EDITABLE_VACANCY_STATUSES.includes(v.status)) {
+    throw new HrDemoError(409, 'CONFLICT', 'বাতিল/বন্ধ শূন্যপদ সম্পাদনা করা যায় না / A rejected or closed vacancy cannot be edited');
+  }
+  if (patch.branchId !== undefined) {
+    v.branchId = patch.branchId;
+    v.branchName = patch.branchId === BRANCH_MYMENSINGH ? 'Mymensingh Sadar' : 'Dhaka Branch';
+  }
+  if (patch.designation !== undefined) v.designation = patch.designation;
+  if (patch.headcount !== undefined) v.headcount = patch.headcount;
+  if (patch.reason !== undefined) v.reason = patch.reason;
+  return v;
+}
+
+/** Withdraw a vacancy request raised in error — candidates must be gone first. */
+export function removeHrVacancy(store: HrDemoData, id: string): void {
+  const i = store.vacancies.findIndex((x) => x.id === id);
+  if (i < 0) throw new HrDemoError(404, 'NOT_FOUND', 'Vacancy not found');
+  const linked = store.applicants.filter((a) => a.vacancyId === id).length;
+  if (linked > 0) {
+    throw new HrDemoError(
+      409,
+      'CONFLICT',
+      `এই শূন্যপদে ${linked} জন আবেদনকারী আছে — আগে তাদের মুছুন / ${linked} applicant(s) still reference this vacancy — remove them first`,
+    );
+  }
+  store.vacancies.splice(i, 1);
+}
+
 export function decideHrVacancy(store: HrDemoData, id: string, decision: 'approve' | 'reject', userId: string, note?: string): Vacancy {
   const v = store.vacancies.find((x) => x.id === id);
   if (!v) throw new HrDemoError(404, 'NOT_FOUND', 'Vacancy not found');
@@ -413,6 +467,34 @@ export function createHrApplicant(store: HrDemoData, input: { vacancyId: string;
   };
   store.applicants.push(applicant);
   return applicant;
+}
+
+/** Fix an applicant's own details; a `joined` candidate is staff now. */
+export function updateHrApplicant(
+  store: HrDemoData,
+  id: string,
+  patch: { name?: string; mobile?: string; educationLevel?: string; experienceYears?: number },
+): Applicant {
+  const a = store.applicants.find((x) => x.id === id);
+  if (!a) throw new HrDemoError(404, 'NOT_FOUND', 'Applicant not found');
+  if (a.status === 'joined') {
+    throw new HrDemoError(409, 'CONFLICT', 'যোগদানকারী আবেদনকারী সম্পাদনাযোগ্য নয় — কর্মচারী রেকর্ড সম্পাদনা করুন / A joined applicant becomes staff — edit the staff record instead');
+  }
+  if (patch.name !== undefined) a.name = patch.name;
+  if (patch.mobile !== undefined) a.mobile = patch.mobile;
+  if (patch.educationLevel !== undefined) a.educationLevel = patch.educationLevel;
+  if (patch.experienceYears !== undefined) a.experienceYears = patch.experienceYears;
+  return a;
+}
+
+/** Delete an applicant added by mistake — never one who has joined. */
+export function removeHrApplicant(store: HrDemoData, id: string): void {
+  const i = store.applicants.findIndex((x) => x.id === id);
+  if (i < 0) throw new HrDemoError(404, 'NOT_FOUND', 'Applicant not found');
+  if (store.applicants[i]!.status === 'joined') {
+    throw new HrDemoError(409, 'CONFLICT', 'যোগদানকারী আবেদনকারী মুছে ফেলা যায় না — কর্মচারী রেকর্ড হিসেবে থাকবে / A joined applicant is staff and cannot be removed');
+  }
+  store.applicants.splice(i, 1);
 }
 
 export function setHrApplicantStatus(store: HrDemoData, id: string, status: Applicant['status'], offeredSalary?: string | null): Applicant {

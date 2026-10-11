@@ -33,11 +33,11 @@ import { requireAuth, requirePermission, type RequestWithAuth } from '../middlew
 import { asyncHandler } from '../middleware/error.js';
 import { validate } from '../middleware/validate.js';
 import { supabaseAdmin } from '../lib/supabase.js';
+import { orgOf } from '../lib/tenant.js';
 
 export const insWelfareLiveRouter = Router();
 insWelfareLiveRouter.use(requireAuth);
 
-const orgOf = (req: RequestWithAuth) => req.auth!.orgId ?? '';
 const nowIso = () => new Date().toISOString();
 const todayStr = () => nowIso().slice(0, 10);
 
@@ -290,14 +290,14 @@ insWelfareLiveRouter.post(
       const next = flow[claim.status as string];
       if (!next) throw Conflict('আর অগ্রিম করা যাবে না / Cannot advance further');
       if (!canTransitionClaim(claim.status as never, next as never)) throw Conflict('অবৈধ অবস্থান্তর / Invalid transition');
-      const up = await supabaseAdmin.from('insurance_claims').update({ status: next, updated_at: now }).eq('id', row.id);
+      const up = await supabaseAdmin.from('insurance_claims').update({ status: next, updated_at: now }).eq('id', row.id).eq('org_id', orgId);
       if (up.error) pgError(up.error);
       return res.json(claimWire({ ...row, status: next, updated_at: now }));
     }
 
     if (body.action === 'reject') {
       if (!canTransitionClaim(claim.status as never, 'rejected')) throw Conflict('এই পর্যায়ে প্রত্যাখ্যান করা যাবে না / Cannot reject at this level');
-      const up = await supabaseAdmin.from('insurance_claims').update({ status: 'rejected', decision_note: note, decided_at: now, updated_at: now }).eq('id', row.id);
+      const up = await supabaseAdmin.from('insurance_claims').update({ status: 'rejected', decision_note: note, decided_at: now, updated_at: now }).eq('id', row.id).eq('org_id', orgId);
       if (up.error) pgError(up.error);
       return res.json(claimWire({ ...row, status: 'rejected', decision_note: note, decided_at: now, updated_at: now }));
     }
@@ -309,7 +309,8 @@ insWelfareLiveRouter.post(
       const up = await supabaseAdmin
         .from('insurance_claims')
         .update({ status: 'approved', approved_amount: Number(amount).toFixed(2), decision_note: note, decided_at: now, updated_at: now })
-        .eq('id', row.id);
+        .eq('id', row.id)
+        .eq('org_id', orgId);
       if (up.error) pgError(up.error);
       return res.json(claimWire({ ...row, status: 'approved', approved_amount: Number(amount).toFixed(2), decision_note: note, decided_at: now, updated_at: now }));
     }
@@ -319,9 +320,9 @@ insWelfareLiveRouter.post(
     const mode = body.action === 'settle_waiver' ? 'waiver' : 'payout';
     const amount = claim.approvedAmount ?? '0.00';
     const up = await supabaseAdmin
-      .from('insurance_claims')
-      .update({ status: 'paid', settlement_mode: mode, updated_at: now })
-      .eq('id', row.id);
+      .from('insurance_claims')        .update({ status: 'paid', settlement_mode: mode, updated_at: now })
+        .eq('id', row.id)
+        .eq('org_id', orgId);
     if (up.error) pgError(up.error);
     await postLedger(orgId, 'insurance', mode === 'waiver' ? 'claim_waiver' : 'claim_paid', amount, `বীমা দাবি ${claim.claimNo}`, { type: 'claim', id: row.id });
     await supabaseAdmin.from('credit_life_policies').update({ status: 'claimed', updated_at: now }).eq('org_id', orgId).eq('id', claim.policyId).eq('status', 'active');
@@ -369,6 +370,7 @@ insWelfareLiveRouter.post(
         .from('micro_insurance_products')
         .update({ annual_premium: b.annualPremium, coverage_limit: b.coverageLimit, units: b.units, active: b.active, updated_at: nowIso() })
         .eq('id', existing.id)
+        .eq('org_id', orgId)
         .select('*')
         .single();
       if (up.error) pgError(up.error);
@@ -648,14 +650,14 @@ insWelfareLiveRouter.post(
       const next = welfareNextLevel(request.status as never, request.amount, rules).next;
       if (!next || next === 'approved') throw Conflict('পরবর্তী পর্যায় নেই / No further review level');
       if (!canTransitionWelfare(request.status as never, next)) throw Conflict('অবৈধ অবস্থান্তর / Invalid transition');
-      const up = await supabaseAdmin.from('welfare_requests').update({ status: next, updated_at: now }).eq('id', row.id);
+      const up = await supabaseAdmin.from('welfare_requests').update({ status: next, updated_at: now }).eq('id', row.id).eq('org_id', orgId);
       if (up.error) pgError(up.error);
       return res.json(welfareWire({ ...row, status: next, updated_at: now }));
     }
 
     if (body.action === 'reject') {
       if (!canTransitionWelfare(request.status as never, 'rejected')) throw Conflict('এই পর্যায়ে প্রত্যাখ্যান করা যাবে না / Cannot reject at this level');
-      const up = await supabaseAdmin.from('welfare_requests').update({ status: 'rejected', decision_note: note, decided_at: now, updated_at: now }).eq('id', row.id);
+      const up = await supabaseAdmin.from('welfare_requests').update({ status: 'rejected', decision_note: note, decided_at: now, updated_at: now }).eq('id', row.id).eq('org_id', orgId);
       if (up.error) pgError(up.error);
       return res.json(welfareWire({ ...row, status: 'rejected', decision_note: note, decided_at: now, updated_at: now }));
     }
@@ -664,14 +666,14 @@ insWelfareLiveRouter.post(
       if (!canTransitionWelfare(request.status as never, 'approved')) throw Conflict('এই পর্যায় থেকে অনুমোদন করা যাবে না / Approve not allowed from this level');
       const gate = welfareNextLevel(request.status as never, request.amount, rules);
       if (gate.next !== 'approved') throw Conflict(`${gate.approverBn} এর অনুমোদন প্রয়োজন / Needs ${gate.approverBn} approval`);
-      const up = await supabaseAdmin.from('welfare_requests').update({ status: 'approved', decision_note: note, decided_at: now, updated_at: now }).eq('id', row.id);
+      const up = await supabaseAdmin.from('welfare_requests').update({ status: 'approved', decision_note: note, decided_at: now, updated_at: now }).eq('id', row.id).eq('org_id', orgId);
       if (up.error) pgError(up.error);
       return res.json(welfareWire({ ...row, status: 'approved', decision_note: note, decided_at: now, updated_at: now }));
     }
 
     // disburse
     if (request.status !== 'approved') throw Conflict('প্রথমে অনুমোদন প্রয়োজন / Approval required first');
-    const up = await supabaseAdmin.from('welfare_requests').update({ status: 'disbursed', disbursed_at: now, updated_at: now }).eq('id', row.id);
+    const up = await supabaseAdmin.from('welfare_requests').update({ status: 'disbursed', disbursed_at: now, updated_at: now }).eq('id', row.id).eq('org_id', orgId);
     if (up.error) pgError(up.error);
     const fund = request.fund === 'staff' ? 'staff_benevolent' : 'member_welfare';
     await postLedger(orgId, fund as never, request.type === 'grant' ? 'grant' : 'loan_disbursed', request.amount, `${request.requestId} — ${request.requesterName}`, { type: 'welfare_request', id: row.id });

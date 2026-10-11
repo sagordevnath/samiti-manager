@@ -11,10 +11,14 @@ export const treeRouter = Router();
 treeRouter.use(requireAuth);
 
 
-const zero = { members: 0, centers: 0, outstandingLoans: '0.00' };
-const add = (a: { members: number; centers: number; outstandingLoans: string }, b: { members: number; centers: number; outstandingLoans: string }) => ({
+const zero = { members: 0, centers: 0, groups: 0, outstandingLoans: '0.00' };
+const add = (
+  a: { members: number; centers: number; groups?: number; outstandingLoans: string },
+  b: { members: number; centers: number; groups?: number; outstandingLoans: string },
+) => ({
   members: a.members + b.members,
   centers: a.centers + b.centers,
+  groups: (a.groups ?? 0) + (b.groups ?? 0),
   outstandingLoans: (Number(a.outstandingLoans) + Number(b.outstandingLoans)).toFixed(2),
 });
 
@@ -34,6 +38,10 @@ treeRouter.get(
       const branchNodes: OrgTreeNode[] = store.branches.map((b) => {
         const s = statsOf(b.id);
         const villages = store.workingAreas.filter((v) => v.branch_id === b.id);
+        const samities = store.samities.filter((c) => c.branch_id === b.id);
+        // Member split across the branch's centers (demo data has no per-center
+        // roster, so the branch roster is divided evenly for display).
+        const perCenter = samities.length > 0 ? Math.round(s.members / samities.length) : 0;
         return {
           id: b.id,
           kind: 'branch' as const,
@@ -42,14 +50,25 @@ treeRouter.get(
           code: b.code,
           status: b.status,
           counts: s,
-          children: villages.map((v) => ({
-            id: v.id,
-            kind: 'working_area' as const,
-            name: v.village,
-            nameBn: v.village_bn,
-            counts: { members: 0, centers: 0, outstandingLoans: '0.00' },
-            children: [],
-          })),
+          children: [
+            ...samities.map((c) => ({
+              id: c.id,
+              kind: 'samity' as const,
+              name: c.name,
+              nameBn: c.name_bn,
+              code: c.code,
+              counts: { members: perCenter, centers: 0, groups: 0, outstandingLoans: '0.00' },
+              children: [],
+            })),
+            ...villages.map((v) => ({
+              id: v.id,
+              kind: 'working_area' as const,
+              name: v.village,
+              nameBn: v.village_bn,
+              counts: { members: 0, centers: 0, groups: 0, outstandingLoans: '0.00' },
+              children: [],
+            })),
+          ],
         };
       });
 
@@ -91,21 +110,24 @@ treeRouter.get(
     }
 
     // ── DB path ──────────────────────────────────────────────────────────────
-    const [zones, areas, branches, villageRows, memberAgg, samityAgg, loanAgg] = await Promise.all([
+    const [zones, areas, branches, villageRows, samityRows, groupRows, memberAgg, loanAgg] = await Promise.all([
       supabaseAdmin.from('zones').select('id, name, name_bn').is('deleted_at', null),
       supabaseAdmin.from('areas').select('id, zone_id, name, name_bn').is('deleted_at', null),
       supabaseAdmin.from('branches').select('id, area_id, name, name_bn, code, status').is('deleted_at', null),
       supabaseAdmin.from('working_areas').select('id, branch_id, village, village_bn').is('deleted_at', null),
-      supabaseAdmin.from('members').select('branch_id').is('deleted_at', null),
-      supabaseAdmin.from('samities').select('branch_id').is('deleted_at', null),
+      // NOTE: samities has no name_bn column (0007) — the Bangla name lives on
+      // the samity `name` itself for this deployment.
+      supabaseAdmin.from('samities').select('id, branch_id, code, name, status').is('deleted_at', null),
+      supabaseAdmin.from('groups').select('id, samity_id, name, status, member_count').is('deleted_at', null),
+      supabaseAdmin.from('members').select('branch_id, samity_id').is('deleted_at', null),
       // The loan table is loan_applications (0012); no soft-delete column.
       supabaseAdmin.from('loan_applications').select('branch_id, requested_amount').eq('status', 'disbursed'),
     ]);
-    for (const r of [zones, areas, branches, villageRows, memberAgg, samityAgg, loanAgg]) {
+    for (const r of [zones, areas, branches, villageRows, samityRows, groupRows, memberAgg, loanAgg]) {
       if (r.error) throw r.error;
     }
 
-    const statsByBranch = new Map<string, { members: number; centers: number; outstandingLoans: string }>();
+    const statsByBranch = new Map<string, { members: number; centers: number; groups?: number; outstandingLoans: string }>();
     const bump = (branchId: string, d: { members?: number; centers?: number; outstanding?: number }) => {
       const cur = statsByBranch.get(branchId) ?? { ...zero };
       cur.members += d.members ?? 0;
@@ -113,13 +135,32 @@ treeRouter.get(
       cur.outstandingLoans = (Number(cur.outstandingLoans) + (d.outstanding ?? 0)).toFixed(2);
       statsByBranch.set(branchId, cur);
     };
-    for (const m of (memberAgg.data ?? []) as { branch_id: string }[]) bump(m.branch_id, { members: 1 });
-    for (const s of (samityAgg.data ?? []) as { branch_id: string }[]) bump(s.branch_id, { centers: 1 });
+    // Per-samity member roll-up (members carry samity_id — 0005).
+    const samityMembers = new Map<string, number>();
+    for (const m of (memberAgg.data ?? []) as { branch_id: string; samity_id: string | null }[]) {
+      bump(m.branch_id, { members: 1 });
+      if (m.samity_id) samityMembers.set(m.samity_id, (samityMembers.get(m.samity_id) ?? 0) + 1);
+    }
+    for (const s of (samityRows.data ?? []) as { branch_id: string }[]) bump(s.branch_id, { centers: 1 });
     for (const l of (loanAgg.data ?? []) as { branch_id: string; requested_amount: string }[]) bump(l.branch_id, { outstanding: Number(l.requested_amount) });
+
+    const groupsBySamity = new Map<string, { id: string; name: string; member_count: number }[]>();
+    for (const g of (groupRows.data ?? []) as { id: string; samity_id: string; name: string; member_count: number }[]) {
+      const list = groupsBySamity.get(g.samity_id) ?? [];
+      list.push({ id: g.id, name: g.name, member_count: g.member_count });
+      groupsBySamity.set(g.samity_id, list);
+    }
+    const samitiesByBranch = new Map<string, { id: string; code: string; name: string }[]>();
+    for (const s of (samityRows.data ?? []) as { id: string; branch_id: string; code: string; name: string }[]) {
+      const list = samitiesByBranch.get(s.branch_id) ?? [];
+      list.push({ id: s.id, code: s.code, name: s.name });
+      samitiesByBranch.set(s.branch_id, list);
+    }
 
     const branchNodes: OrgTreeNode[] = (branches.data ?? []).map((b) => {
       const br = b as { id: string; area_id: string | null; name: string; name_bn: string | null; code: string; status: string };
       const villages = (villageRows.data ?? []).filter((v) => (v as { branch_id: string | null }).branch_id === br.id);
+      const centers = samitiesByBranch.get(br.id) ?? [];
       return {
         id: br.id,
         kind: 'branch' as const,
@@ -128,17 +169,44 @@ treeRouter.get(
         code: br.code,
         status: br.status as OrgTreeNode['status'],
         counts: statsByBranch.get(br.id) ?? { ...zero },
-        children: villages.map((v) => {
-          const wv = v as { id: string; village: string; village_bn: string | null };
-          return {
-            id: wv.id,
-            kind: 'working_area' as const,
-            name: wv.village,
-            nameBn: wv.village_bn,
-            counts: { ...zero },
-            children: [],
-          };
-        }),
+        children: [
+          // Samity (center) nodes with their groups — the field operating unit.
+          ...centers.map((c) => {
+            const groups = groupsBySamity.get(c.id) ?? [];
+            return {
+              id: c.id,
+              kind: 'samity' as const,
+              name: c.name,
+              nameBn: null,
+              code: c.code,
+              counts: {
+                members: samityMembers.get(c.id) ?? 0,
+                centers: 0,
+                groups: groups.length,
+                outstandingLoans: '0.00',
+              },
+              children: groups.map((g) => ({
+                id: g.id,
+                kind: 'group' as const,
+                name: g.name,
+                nameBn: null,
+                counts: { members: g.member_count, centers: 0, groups: 0, outstandingLoans: '0.00' },
+                children: [],
+              })),
+            };
+          }),
+          ...villages.map((v) => {
+            const wv = v as { id: string; village: string; village_bn: string | null };
+            return {
+              id: wv.id,
+              kind: 'working_area' as const,
+              name: wv.village,
+              nameBn: wv.village_bn,
+              counts: { ...zero },
+              children: [],
+            };
+          }),
+        ],
       };
     });
 

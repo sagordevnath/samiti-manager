@@ -1,12 +1,13 @@
 import { Router } from 'express';
 import { loginSchema } from '@samity/shared';
-import { supabaseAdmin } from '../lib/supabase.js';
+import { supabaseAuth } from '../lib/supabase.js';
 import { asyncHandler } from '../middleware/error.js';
 import { BadRequest, Unauthorized } from '../lib/errors.js';
 import { validate } from '../middleware/validate.js';
 import type { RequestWithAuth } from '../middleware/auth.js';
 import { requireAuth } from '../middleware/auth.js';
 import { checkLockout, recordLoginAttempt } from '../lib/security-store.js';
+import { DEMO_TOKEN, demoAuthUser, isDemoMode } from '../lib/demo.js';
 
 export const authRouter = Router();
 
@@ -17,9 +18,15 @@ function clientIp(req: { headers: Record<string, unknown>; ip?: string }): strin
 
 /**
  * POST /api/v1/auth/login
- * Proxies Supabase Auth password login. In production you may prefer calling
- * Supabase directly from the browser; keeping it here lets us attach
- * app-level claims (role, org, permissions) in one place.
+ * Signs in through Supabase Auth (GoTrue). The service client holds the
+ * service_role key; a legacy anon key also works for this specific endpoint
+ * because it is the public publishable key clients use to sign in with.
+ *
+ * The demo login user must exist in auth.users. If the seed's direct
+ * `insert into auth.users` did not take effect (depends on the project's
+ * auth schema), create it with scripts/ensure-demo-user.mjs, which uses the
+ * Admin API and therefore always produces a GoTrue-compatible password hash
+ * and a matching auth.identities row.
  */
 authRouter.post(
   '/login',
@@ -28,6 +35,27 @@ authRouter.post(
     const { email, password } = req.body as { email: string; password: string };
     const ip = clientIp(req);
 
+    // Demo mode: the placeholder Supabase project cannot authenticate anyone,
+    // so serve the seeded super_admin session for the documented demo
+    // credentials (the same ones the SQL seed creates in live mode).
+    if (isDemoMode() && email === 'admin@samity.test' && password === 'Samity@2026') {
+      recordLoginAttempt(email, true, ip);
+      const demo = demoAuthUser();
+      res.json({
+        accessToken: DEMO_TOKEN,
+        refreshToken: 'demo-refresh',
+        expiresIn: 3600,
+        user: {
+          id: demo.userId,
+          email: demo.email,
+          role: demo.role,
+          orgId: demo.orgId,
+          branchId: demo.branchId,
+        },
+      });
+      return;
+    }
+
     // Brute-force lockout (req 3): 5 failures / 15 min → 15 min lock.
     const lock = checkLockout(email);
     if (lock.locked) {
@@ -35,7 +63,10 @@ authRouter.post(
       throw Unauthorized(`অ্যাকাউন্ট লক হয়েছে — ${Math.ceil(lock.remainingMs / 60_000)} মিনিট পরে চেষ্টা করুন / Account locked, try again in ${Math.ceil(lock.remainingMs / 60_000)} min`);
     }
 
-    const { data, error } = await supabaseAdmin.auth.signInWithPassword({ email, password });
+    // GoTrue runs on its own client: signing in on the shared data client would
+    // pin this process's Authorization header to the user's JWT and silently
+    // downgrade every later query from service_role to `authenticated`.
+    const { data, error } = await supabaseAuth.auth.signInWithPassword({ email, password });
     if (error || !data.session) {
       recordLoginAttempt(email, false, ip);
       // Same message for wrong email / wrong password — avoids user enumeration.

@@ -16,15 +16,18 @@ import {
   type DisbursementCheckItem,
   type DisbursementMode,
   type Holiday,
+  type LoanApplicationStatus,
 } from '@samity/shared';
 import { AppError, BadRequest, Conflict, Forbidden, NotFound } from '../lib/errors.js';
 import { supabaseAdmin } from '../lib/supabase.js';
+import { scopesOrg, scopeToOrg } from '../lib/tenant.js';
 import { requireAuth, requirePermission, type RequestWithAuth } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/error.js';
 import { validate } from '../middleware/validate.js';
 
 export const loansRouter = Router();
 loansRouter.use(requireAuth);
+
 
 // ── Policy ──────────────────────────────────────────────────────────────────
 loansRouter.get(
@@ -33,7 +36,7 @@ loansRouter.get(
   asyncHandler(async (req, res) => {
     const auth = (req as RequestWithAuth).auth!;
     let query = supabaseAdmin.from('loan_policies').select('*').limit(1);
-    if (auth.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
+    if (scopesOrg(auth)) query = query.eq('org_id', auth.orgId);
     const { data, error } = await query;
     if (error) throw error;
     const row = data?.[0];
@@ -120,7 +123,7 @@ loansRouter.get(
   asyncHandler(async (req, res) => {
     const auth = (req as RequestWithAuth).auth!;
     let query = supabaseAdmin.from('loan_products').select('*').order('code');
-    if (auth.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
+    if (scopesOrg(auth)) query = query.eq('org_id', auth.orgId);
     const { data, error } = await query;
     if (error) throw error;
     res.json({ items: data ?? [] });
@@ -183,19 +186,103 @@ loansRouter.post(
 );
 
 // ── Applications ────────────────────────────────────────────────────────────
+/**
+ * GET /loans/applications — the Loans page contract: camelCase rows enriched
+ * with the member + product labels the table renders, plus the status pipeline
+ * buckets drawn as KPI cards. Returning raw snake_case rows here (no
+ * `pipeline`, no names) crashed the page in live mode — this keeps the live
+ * shape identical to loans.demo.routes.ts.
+ */
 loansRouter.get(
   '/applications',
   requirePermission('loan:read'),
   asyncHandler(async (req, res) => {
     const auth = (req as RequestWithAuth).auth!;
-    let query = supabaseAdmin.from('loan_applications').select('*').order('created_at', { ascending: false });
-    if (auth.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
+    let query = supabaseAdmin
+      .from('loan_applications')
+      .select('id, application_number, org_id, branch_id, member_id, product_id, requested_amount, purpose, term_months, status, decision_reason, decided_at, created_at')
+      .order('created_at', { ascending: false });
+    if (scopesOrg(auth)) query = query.eq('org_id', auth.orgId);
     if (auth.branchId && ['branch_manager', 'account_officer'].includes(auth.role)) {
       query = query.eq('branch_id', auth.branchId);
     }
     const { data, error } = await query;
     if (error) throw error;
-    res.json({ items: data ?? [] });
+
+    type AppRow = {
+      id: string;
+      application_number: string;
+      branch_id: string;
+      member_id: string;
+      product_id: string;
+      requested_amount: string | number;
+      purpose: string;
+      term_months: number | null;
+      status: LoanApplicationStatus;
+      decision_reason: string | null;
+      decided_at: string | null;
+      created_at: string;
+    };
+    const rows = (data ?? []) as AppRow[];
+
+    // Resolve the display labels in one round trip per table (no N+1).
+    const memberIds = [...new Set(rows.map((r) => r.member_id))];
+    const productIds = [...new Set(rows.map((r) => r.product_id))];
+    let memberRows: Array<{ id: string; member_code: string | null; full_name: string; full_name_bn: string | null }> = [];
+    if (memberIds.length > 0) {
+      const res2 = await supabaseAdmin.from('members').select('id, member_code, full_name, full_name_bn').in('id', memberIds);
+      if (res2.error) throw res2.error;
+      memberRows = (res2.data ?? []) as typeof memberRows;
+    }
+    let productRows: Array<{ id: string; code: string; name: string; name_bn: string | null }> = [];
+    if (productIds.length > 0) {
+      const res3 = await supabaseAdmin.from('loan_products').select('id, code, name, name_bn').in('id', productIds);
+      if (res3.error) throw res3.error;
+      productRows = (res3.data ?? []) as typeof productRows;
+    }
+    const memberById = new Map(memberRows.map((m) => [m.id, m]));
+    const productById = new Map(productRows.map((p) => [p.id, p]));
+
+    const items = rows.map((r) => {
+      const member = memberById.get(r.member_id);
+      const product = productById.get(r.product_id);
+      return {
+        id: r.id,
+        applicationNumber: r.application_number,
+        branchId: r.branch_id,
+        memberId: r.member_id,
+        memberName: member?.full_name_bn || member?.full_name || null,
+        memberCode: member?.member_code ?? null,
+        productId: r.product_id,
+        productName: product?.name ?? null,
+        productNameBn: product?.name_bn ?? null,
+        requestedAmount: String(r.requested_amount),
+        purpose: r.purpose,
+        termMonths: r.term_months ?? 0,
+        status: r.status,
+        decisionReason: r.decision_reason,
+        decidedAt: r.decided_at,
+        createdAt: r.created_at,
+      };
+    });
+
+    const buckets = new Map<string, { count: number; total: number }>();
+    for (const r of rows) {
+      const bucket = buckets.get(r.status) ?? { count: 0, total: 0 };
+      bucket.count += 1;
+      bucket.total += Number(r.requested_amount);
+      buckets.set(r.status, bucket);
+    }
+
+    res.json({
+      items,
+      total: rows.length,
+      pipeline: [...buckets.entries()].map(([status, b]) => ({
+        status,
+        count: b.count,
+        totalAmount: b.total.toFixed(2),
+      })),
+    });
   }),
 );
 
@@ -215,9 +302,12 @@ loansRouter.post(
     };
     if (!auth.branchId) throw BadRequest('Branch assignment is required to file an application');
 
-    const { data: product, error: productError } = await supabaseAdmin
-      .from('loan_products')
-      .select('id, org_id, min_amount, max_amount, term_months, is_active')
+    // Client-addressed product lookup: the tenant predicate keeps an
+    // application from being filed against another organization's product.
+    const { data: product, error: productError } = await scopeToOrg(
+      supabaseAdmin.from('loan_products').select('id, org_id, min_amount, max_amount, term_months, is_active'),
+      req as RequestWithAuth,
+    )
       .eq('id', body.productId)
       .single();
     if (productError || !product) throw NotFound('Loan product not found');
@@ -275,17 +365,127 @@ loansRouter.post(
   }),
 );
 
+const STAGE_BN: Record<string, string> = {
+  member_request: 'সদস্যের আবেদন',
+  officer_visit: 'অফিসার পরিদর্শন',
+  household_check: 'গার্হস্থ্য যাচাই',
+  guarantor: 'গ্যারান্টর',
+  bm_review: 'শাখা ব্যবস্থাপক পর্যালোচনা',
+  am_review: 'এরিয়া ব্যবস্থাপক অনুমোদন',
+  decision: 'চূড়ান্ত সিদ্ধান্ত',
+};
+
+/**
+ * GET /loans/applications/:id — the Loan Detail page contract. The page reads
+ * `steps`, `memberName`, `productName` and `requestedAmount` directly, so raw
+ * snake_case rows crashed it; this returns the demo-compatible camelCase shape
+ * while keeping the original columns for other consumers.
+ */
 loansRouter.get(
   '/applications/:id',
   requirePermission('loan:read'),
   asyncHandler(async (req, res) => {
+    const id = req.params['id'] as string;
     const { data, error } = await supabaseAdmin
       .from('loan_applications')
-      .select('*, loan_application_steps(*)')
-      .eq('id', req.params['id'])
+      .select('*')
+      .eq('id', id)
       .single();
     if (error || !data) throw NotFound('Loan application not found');
-    res.json(data);
+
+    const row = data as Record<string, unknown> & {
+      application_number: string;
+      member_id: string;
+      product_id: string;
+      requested_amount: string | number;
+      term_months: number | null;
+      status: LoanApplicationStatus;
+      decision_reason: string | null;
+      branch_id: string;
+    };
+
+    const [stepsRes, memberRes, productRes] = await Promise.all([
+      supabaseAdmin
+        .from('loan_application_steps')
+        .select('id, stage, action, actor_role, note, created_at')
+        .eq('application_id', id)
+        .order('created_at', { ascending: true }),
+      supabaseAdmin.from('members').select('id, member_code, full_name, full_name_bn').eq('id', row.member_id).maybeSingle(),
+      supabaseAdmin.from('loan_products').select('id, code, name, name_bn').eq('id', row.product_id).maybeSingle(),
+    ]);
+    if (stepsRes.error) throw stepsRes.error;
+    if (memberRes.error) throw memberRes.error;
+    if (productRes.error) throw productRes.error;
+
+    const member = memberRes.data as { member_code: string | null; full_name: string; full_name_bn: string | null } | null;
+    const product = productRes.data as { name: string; name_bn: string | null } | null;
+    const steps = ((stepsRes.data ?? []) as Array<{ id: string; stage: string; action: string; actor_role: string; note: string | null; created_at: string }>).map(
+      (s) => ({ id: s.id, stage: s.stage, action: s.action, actorRole: s.actor_role, note: s.note, createdAt: s.created_at }),
+    );
+
+    res.json({
+      ...row,
+      applicationNumber: row.application_number,
+      memberId: row.member_id,
+      memberName: member?.full_name_bn || member?.full_name || null,
+      memberCode: member?.member_code ?? null,
+      productId: row.product_id,
+      productName: product?.name ?? null,
+      productNameBn: product?.name_bn ?? null,
+      requestedAmount: String(row.requested_amount),
+      termMonths: row.term_months ?? 0,
+      decisionReason: row.decision_reason,
+      branchId: row.branch_id,
+      steps,
+      // Cycle governance and utilization plans are optional in the live schema;
+      // the page renders those sections only when present.
+      cycle: null,
+      utilization: null,
+    });
+  }),
+);
+
+/** GET /loans/applications/:id/timeline — audit-trailed stage history. */
+loansRouter.get(
+  '/applications/:id/timeline',
+  requirePermission('loan:read'),
+  asyncHandler(async (req, res) => {
+    const id = req.params['id'] as string;
+    const { data: app, error } = await supabaseAdmin
+      .from('loan_applications')
+      .select('application_number, status')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!app) throw NotFound('Loan application not found');
+
+    const { data: steps, error: stepsError } = await supabaseAdmin
+      .from('loan_application_steps')
+      .select('id, stage, action, actor_role, actor_id, note, created_at')
+      .eq('application_id', id)
+      .order('created_at', { ascending: true });
+    if (stepsError) throw stepsError;
+
+    const items = ((steps ?? []) as Array<{
+      id: string;
+      stage: string;
+      action: string;
+      actor_role: string;
+      actor_id: string | null;
+      note: string | null;
+      created_at: string;
+    }>).map((s) => ({
+      id: s.id,
+      stage: s.stage,
+      stageBn: STAGE_BN[s.stage] ?? s.stage,
+      action: s.action,
+      actorRole: s.actor_role,
+      actorName: s.actor_id,
+      note: s.note,
+      createdAt: s.created_at,
+    }));
+
+    res.json({ items, applicationNumber: app.application_number, status: app.status });
   }),
 );
 
@@ -297,9 +497,10 @@ loansRouter.post(
   asyncHandler(async (req, res) => {
     const auth = (req as RequestWithAuth).auth!;
     const body = req.body as { stage: string; note?: string; payload?: Record<string, unknown> };
-    const { data: app, error: appError } = await supabaseAdmin
-      .from('loan_applications')
-      .select('id, org_id, status, requested_amount, branch_id')
+    const { data: app, error: appError } = await scopeToOrg(
+      supabaseAdmin.from('loan_applications').select('id, org_id, status, requested_amount, branch_id'),
+      req as RequestWithAuth,
+    )
       .eq('id', req.params['id'])
       .single();
     if (appError || !app) throw NotFound('Loan application not found');
@@ -376,7 +577,7 @@ loansRouter.post(
       if (doneOfficer.length === 1) next = 'officer_review';
       if (doneOfficer.length === officerStages.length) next = 'bm_review';
       if (next) {
-        await supabaseAdmin.from('loan_applications').update({ status: next }).eq('id', app.id);
+        await scopeToOrg(supabaseAdmin.from('loan_applications').update({ status: next }), req as RequestWithAuth).eq('id', app.id);
       }
     }
 
@@ -395,9 +596,12 @@ loansRouter.post(
     if (auth.role !== 'super_admin' && !['branch_manager', 'area_manager'].includes(auth.role)) {
       throw Forbidden('Only branch or area managers decide applications');
     }
-    const { data: app, error: appError } = await supabaseAdmin
-      .from('loan_applications')
-      .select('id, org_id, status, requested_amount, branch_id, member_id, product_id')
+    const { data: app, error: appError } = await scopeToOrg(
+      supabaseAdmin
+        .from('loan_applications')
+        .select('id, org_id, status, requested_amount, branch_id, member_id, product_id'),
+      req as RequestWithAuth,
+    )
       .eq('id', req.params['id'])
       .single();
     if (appError || !app) throw NotFound('Loan application not found');
@@ -433,14 +637,17 @@ loansRouter.post(
     });
     if (stepError) throw stepError;
 
-    const { data, error } = await supabaseAdmin
-      .from('loan_applications')
-      .update({
-        status: body.decision === 'approve' ? 'approved' : 'rejected',
-        decision_reason: body.decision === 'reject' ? (body.reason ?? null) : null,
-        decided_by: auth.userId,
-        decided_at: now,
-      })
+    const { data, error } = await scopeToOrg(
+      supabaseAdmin
+        .from('loan_applications')
+        .update({
+          status: body.decision === 'approve' ? 'approved' : 'rejected',
+          decision_reason: body.decision === 'reject' ? (body.reason ?? null) : null,
+          decided_by: auth.userId,
+          decided_at: now,
+        }),
+      req as RequestWithAuth,
+    )
       .eq('id', app.id)
       .select('*')
       .single();
@@ -454,9 +661,12 @@ loansRouter.get(
   '/applications/:id/schedule',
   requirePermission('loan:read'),
   asyncHandler(async (req, res) => {
-    const { data: app, error: appError } = await supabaseAdmin
-      .from('loan_applications')
-      .select('requested_amount, term_months, loan_products(interest_rate, interest_method, installment_frequency, grace_period_installments)')
+    const { data: app, error: appError } = await scopeToOrg(
+      supabaseAdmin
+        .from('loan_applications')
+        .select('requested_amount, term_months, loan_products(interest_rate, interest_method, installment_frequency, grace_period_installments)'),
+      req as RequestWithAuth,
+    )
       .eq('id', req.params['id'])
       .single();
     if (appError || !app) throw NotFound('Loan application not found');
@@ -488,7 +698,7 @@ loansRouter.get(
   asyncHandler(async (req, res) => {
     const auth = (req as RequestWithAuth).auth!;
     let query = supabaseAdmin.from('loan_applications').select('status, requested_amount');
-    if (auth.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
+    if (scopesOrg(auth)) query = query.eq('org_id', auth.orgId);
     const { data, error } = await query;
     if (error) throw error;
     const buckets = new Map<string, { count: number; total: number }>();
@@ -520,7 +730,7 @@ loansRouter.get(
       .from('loan_applications')
       .select('id, application_number, org_id, branch_id, member_id, requested_amount, product_id, decided_at')
       .eq('status', 'approved')
-    if (auth.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
+    if (scopesOrg(auth)) query = query.eq('org_id', auth.orgId);
     if (auth.branchId && ['branch_manager', 'account_officer'].includes(auth.role)) {
       query = query.eq('branch_id', auth.branchId);
     }
@@ -574,9 +784,10 @@ loansRouter.get(
   requirePermission('loan:read'),
   asyncHandler(async (req, res) => {
     const applicationId = req.params['applicationId'] as string;
-    const { data: app } = await supabaseAdmin
-      .from('loan_applications')
-      .select('id, status, requested_amount')
+    const { data: app } = await scopeToOrg(
+      supabaseAdmin.from('loan_applications').select('id, status, requested_amount'),
+      req as RequestWithAuth,
+    )
       .eq('id', applicationId)
       .maybeSingle();
     if (!app) throw NotFound('Loan application not found');
@@ -596,9 +807,10 @@ loansRouter.patch(
   asyncHandler(async (req, res) => {
     const auth = (req as RequestWithAuth).auth!;
     const applicationId = req.params['applicationId'] as string;
-    const { data: app } = await supabaseAdmin
-      .from('loan_applications')
-      .select('id, org_id, branch_id, status')
+    const { data: app } = await scopeToOrg(
+      supabaseAdmin.from('loan_applications').select('id, org_id, branch_id, status'),
+      req as RequestWithAuth,
+    )
       .eq('id', applicationId)
       .maybeSingle();
     if (!app) throw NotFound('Loan application not found');
@@ -627,7 +839,7 @@ loansRouter.patch(
       updated_at: new Date().toISOString(),
     };
     const { data, error } = existing
-      ? await supabaseAdmin.from('loan_disbursements').update(values).eq('id', existing.id).select().single()
+      ? await scopeToOrg(supabaseAdmin.from('loan_disbursements').update(values), req as RequestWithAuth).eq('id', existing.id).select().single()
       : await supabaseAdmin.from('loan_disbursements').insert({ ...values, created_by: auth.userId }).select().single();
     if (error) throw error;
     res.json(data);
@@ -655,9 +867,12 @@ loansRouter.post(
       cashAvailableBdt?: string;
     };
 
-    const { data: app } = await supabaseAdmin
-      .from('loan_applications')
-      .select('id, org_id, branch_id, status, requested_amount, product_id, term_months')
+    const { data: app } = await scopeToOrg(
+      supabaseAdmin
+        .from('loan_applications')
+        .select('id, org_id, branch_id, status, requested_amount, product_id, term_months'),
+      req as RequestWithAuth,
+    )
       .eq('id', applicationId)
       .maybeSingle();
     if (!app) throw NotFound('Loan application not found');
@@ -762,13 +977,13 @@ loansRouter.post(
       .maybeSingle();
     if (existingRec?.status === 'completed') throw Conflict('This loan has already been disbursed');
     const { data: rec, error: recError } = existingRec
-      ? await supabaseAdmin.from('loan_disbursements').update(disbursementValues).eq('id', existingRec.id).select().single()
+      ? await scopeToOrg(supabaseAdmin.from('loan_disbursements').update(disbursementValues), req as RequestWithAuth).eq('id', existingRec.id).select().single()
       : await supabaseAdmin.from('loan_disbursements').insert({ ...disbursementValues, created_by: auth.userId }).select().single();
     if (recError) throw recError;
 
     // Store the schedule rows (unique per application+seq; wipe a partial
     // attempt first so the execute is idempotent on retry after failure).
-    await supabaseAdmin.from('loan_repayment_schedule').delete().eq('application_id', applicationId);
+    await scopeToOrg(supabaseAdmin.from('loan_repayment_schedule').delete(), req as RequestWithAuth).eq('application_id', applicationId);
     const { error: schedError } = await supabaseAdmin.from('loan_repayment_schedule').insert(
       schedule.rows.map((r) => ({
         org_id: app.org_id,
@@ -788,9 +1003,12 @@ loansRouter.post(
     if (schedError) throw schedError;
 
     // Flip the application to disbursed (the DB trigger also guards this).
-    const { error: appError } = await supabaseAdmin
-      .from('loan_applications')
-      .update({ status: 'disbursed', updated_at: new Date().toISOString() })
+    const { error: appError } = await scopeToOrg(
+      supabaseAdmin
+        .from('loan_applications')
+        .update({ status: 'disbursed', updated_at: new Date().toISOString() }),
+      req as RequestWithAuth,
+    )
       .eq('id', applicationId)
       .eq('status', 'approved');
     if (appError) throw appError;
@@ -821,7 +1039,7 @@ loansRouter.get(
   asyncHandler(async (req, res) => {
     const auth = (req as RequestWithAuth).auth!;
     let query = supabaseAdmin.from('loan_holidays').select('*').order('date');
-    if (auth.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
+    if (scopesOrg(auth)) query = query.eq('org_id', auth.orgId);
     const { data, error } = await query;
     if (error) throw error;
     res.json({ items: data ?? [] });
@@ -860,7 +1078,7 @@ loansRouter.delete(
     const auth = (req as RequestWithAuth).auth!;
     const date = req.params['date'] as string;
     let query = supabaseAdmin.from('loan_holidays').delete().eq('date', date);
-    if (auth.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
+    if (scopesOrg(auth)) query = query.eq('org_id', auth.orgId);
     const { data, error } = await query.select();
     if (error) throw error;
     if (!data?.length) throw NotFound(`No holiday on ${date}`);

@@ -3,7 +3,7 @@ import express from 'express';
 import helmet from 'helmet';
 import { pinoHttp } from 'pino-http';
 import rateLimit from 'express-rate-limit';
-import { env } from './env.js';
+import { isAllowedOrigin } from './env.js';
 import { logger } from './lib/logger.js';
 import { errorHandler } from './middleware/error.js';
 import { authRouter } from './routes/auth.routes.js';
@@ -50,6 +50,8 @@ import { commLiveRouter } from './routes/comms-live.routes.js';
 import { commBulkLiveRouter, documentsLiveRouter, publicVerifyLiveRouter } from './routes/documents-live.routes.js';
 import { securityLiveRouter } from './routes/security-live.routes.js';
 import { privacyLiveRouter } from './routes/privacy-live.routes.js';
+import { usersRouter } from './routes/users.routes.js';
+import { usersDemoRouter } from './routes/users.demo.routes.js';
 
 export function createApp() {
   const app = express();
@@ -61,7 +63,9 @@ export function createApp() {
   app.use(helmet());
   app.use(
     cors({
-      origin: env.CORS_ORIGINS,
+      // Loopback origins (any port) are same-site outside production, so the
+      // Vite dev server works on 5173/5174/5175/… without editing CORS_ORIGINS.
+      origin: (origin, cb) => cb(null, !origin || isAllowedOrigin(origin)),
       credentials: true,
     }),
   );
@@ -84,7 +88,7 @@ export function createApp() {
 
   // ── Security module hardening (req 3) ───────────────────────────────────
   // CSRF: browser-originated mutations must be same-origin + X-Requested-With.
-  app.use(csrfGuard(env.CORS_ORIGINS));
+  app.use(csrfGuard(isAllowedOrigin));
   // Idle/absolute session timeout per bearer token (demo mode).
   app.use(sessionTimeoutMiddleware);
   // Append-only audit trail for sensitive mutations (demo-mode analog of the
@@ -114,6 +118,9 @@ export function createApp() {
   if (!isDemoMode()) app.use('/api/v1/dashboard', dashboardRouter);
   app.use('/api/v1/samities', samityRouter);
   app.use('/api/v1/nav', navRouter);
+  // User accounts & access: demo mode keeps an in-memory directory, a
+  // configured project serves users_profile + the Supabase Auth directory.
+  app.use('/api/v1/users', isDemoMode() ? usersDemoRouter : usersRouter);
   app.use('/api/v1/org', orgRouter);
   app.use('/api/v1/org', treeRouter);
   // Demo mode (placeholder Supabase env / tests) serves the in-memory store;

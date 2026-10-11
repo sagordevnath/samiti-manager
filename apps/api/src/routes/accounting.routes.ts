@@ -29,16 +29,12 @@ import { requireAuth, requirePermission, type RequestWithAuth } from '../middlew
 import { asyncHandler } from '../middleware/error.js';
 import { validate } from '../middleware/validate.js';
 import { supabaseAdmin } from '../lib/supabase.js';
+import { orgOf, scopeOrg, scopeToOrg } from '../lib/tenant.js';
 
 export const accountingRouter = Router();
 accountingRouter.use(requireAuth);
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
-const orgOf = (req: RequestWithAuth) => req.auth!.orgId ?? '';
-const scopeOrg = (req: RequestWithAuth) => {
-  const auth = req.auth!;
-  return Boolean(auth.orgId) && auth.role !== 'super_admin';
-};
 
 /** Fetch a GL code → name map for line rendering. */
 async function glNames(): Promise<Map<string, string>> {
@@ -353,17 +349,26 @@ accountingRouter.post(
 );
 
 /** Shared voucher status transition (check/approve). */
-async function transitionVoucher(id: string, from: string, to: string, userId: string, atColumn: string, byColumn: string, note?: string) {
+async function transitionVoucher(
+  id: string,
+  from: string,
+  to: string,
+  userId: string,
+  atColumn: string,
+  byColumn: string,
+  note: string | undefined,
+  req: RequestWithAuth,
+) {
   const patch: Record<string, unknown> = { status: to };
   patch[byColumn] = userId;
   patch[atColumn] = new Date().toISOString();
   if (note) patch['memo'] = undefined; // note is not persisted separately
-  const { data, error } = await supabaseAdmin
-    .from('vouchers')
-    .update(patch)
-    .eq('id', id)
-    .eq('status', from)
-    .is('deleted_at', null)
+  // The voucher id comes straight from the URL, so the tenant predicate has to
+  // ride on the update itself — the service-role client bypasses RLS.
+  const { data, error } = await scopeToOrg(
+    supabaseAdmin.from('vouchers').update(patch).eq('id', id).eq('status', from).is('deleted_at', null),
+    req,
+  )
     .select('id')
     .maybeSingle();
   if (error || !data) throw NotFound(`Voucher not found or not in '${from}' status`);
@@ -375,7 +380,7 @@ accountingRouter.post(
   requirePermission('savings:write'),
   validate(voucherCheckSchema),
   asyncHandler(async (req: RequestWithAuth, res) => {
-    res.json(await transitionVoucher(req.params['id'] as string, 'draft', 'checked', req.auth!.userId, 'checked_at', 'checked_by', (req.body as { note?: string }).note));
+    res.json(await transitionVoucher(req.params['id'] as string, 'draft', 'checked', req.auth!.userId, 'checked_at', 'checked_by', (req.body as { note?: string }).note, req));
   }),
 );
 
@@ -384,7 +389,7 @@ accountingRouter.post(
   requirePermission('member:approve'),
   validate(voucherApproveSchema),
   asyncHandler(async (req: RequestWithAuth, res) => {
-    res.json(await transitionVoucher(req.params['id'] as string, 'checked', 'approved', req.auth!.userId, 'approved_at', 'approved_by', (req.body as { note?: string }).note));
+    res.json(await transitionVoucher(req.params['id'] as string, 'checked', 'approved', req.auth!.userId, 'approved_at', 'approved_by', (req.body as { note?: string }).note, req));
   }),
 );
 
@@ -419,12 +424,9 @@ accountingRouter.patch(
     if (body.settlementCode) patch['settlement_code'] = body.settlementCode;
     if (body.counterCode) patch['counter_code'] = body.counterCode;
     if (body.isActive !== undefined) patch['is_active'] = body.isActive;
-    const { data, error } = await supabaseAdmin
-      .from('event_journal_mappings')
-      .update(patch)
-      .eq('id', req.params['id'] as string)
-      .select('*')
-      .single();
+    let query = supabaseAdmin.from('event_journal_mappings').update(patch).eq('id', req.params['id'] as string);
+    query = scopeToOrg(query, req);
+    const { data, error } = await query.select('*').single();
     if (error || !data) throw NotFound('Mapping not found');
     res.json({ id: data.id, event: data.event, settlementCode: data.settlement_code, counterCode: data.counter_code, isActive: data.is_active });
   }),
@@ -639,24 +641,23 @@ accountingRouter.post(
     const branchId = (req.query['branchId'] as string) ?? '';
     const date = (req.query['date'] as string) ?? todayStr();
     if (!branchId) throw NotFound('branchId required');
-    const { data: day } = await supabaseAdmin
-      .from('cash_book_days')
-      .select('*')
-      .eq('branch_id', branchId)
-      .eq('book_date', date)
-      .maybeSingle();
+    const { data: day } = await scopeToOrg(
+      supabaseAdmin.from('cash_book_days').select('*').eq('branch_id', branchId).eq('book_date', date),
+      req,
+    ).maybeSingle();
     if (!day) throw NotFound('Cash book day not found — close via cash-book/close');
     const counted = Number(body.countedCash);
     const diff = counted - Number(day.expected_closing ?? 0);
-    const { data: updated, error } = await supabaseAdmin
-      .from('cash_book_days')
-      .update({
+    const { data: updated, error } = await scopeToOrg(
+      supabaseAdmin.from('cash_book_days').update({
         counted_cash: body.countedCash,
         difference: diff.toFixed(2),
         difference_kind: Math.abs(diff) < 0.005 ? 'exact' : diff > 0 ? 'excess' : 'shortage',
         note: body.note ?? day.note,
         updated_at: new Date().toISOString(),
-      })
+      }),
+      req,
+    )
       .eq('id', day.id)
       .select('*')
       .single();
@@ -837,6 +838,13 @@ accountingRouter.post(
   requirePermission('savings:write'),
   asyncHandler(async (req: RequestWithAuth, res) => {
     const body = (req.body ?? {}) as { matchedVoucherNumber?: string };
+    // bank_statement_lines carries no org_id of its own — the parent
+    // reconciliation does, so the tenant check goes through that row before
+    // the line is touched.
+    const { data: rec } = await scopeToOrg(supabaseAdmin.from('bank_reconciliations').select('id'), req)
+      .eq('id', req.params['id'] as string)
+      .maybeSingle();
+    if (!rec) throw NotFound('Reconciliation not found');
     const { error } = await supabaseAdmin
       .from('bank_statement_lines')
       .update({ matched_voucher_number: body.matchedVoucherNumber ?? `cleared-${req.auth!.userId.slice(0, 8)}` })
@@ -893,18 +901,21 @@ accountingRouter.post(
   validate(pettyCashTopUpSchema),
   asyncHandler(async (req: RequestWithAuth, res) => {
     const body = req.body as { branchId: string; amount: string; note?: string };
-    const { data: account } = await supabaseAdmin
-      .from('petty_cash_accounts')
-      .select('*')
+    const { data: account } = await scopeToOrg(
+      supabaseAdmin.from('petty_cash_accounts').select('*'),
+      req,
+    )
       .eq('branch_id', body.branchId)
       .maybeSingle();
     const current = account ? Number(account.balance) : 0;
     const after = current + Number(body.amount);
     if (account) {
-      await supabaseAdmin
-        .from('petty_cash_accounts')
-        .update({ balance: after.toFixed(2), updated_at: new Date().toISOString() })
-        .eq('id', account.id);
+      await scopeToOrg(
+        supabaseAdmin
+          .from('petty_cash_accounts')
+          .update({ balance: after.toFixed(2), updated_at: new Date().toISOString() }),
+        req,
+      ).eq('id', account.id);
     } else {
       await supabaseAdmin.from('petty_cash_accounts').insert({ org_id: orgOf(req), branch_id: body.branchId, balance: after.toFixed(2) });
     }
@@ -927,19 +938,22 @@ accountingRouter.post(
   validate(pettyCashSpendSchema),
   asyncHandler(async (req: RequestWithAuth, res) => {
     const body = req.body as { branchId: string; amount: string; expenseCode: string; spentOn: string };
-    const { data: account } = await supabaseAdmin
-      .from('petty_cash_accounts')
-      .select('*')
+    const { data: account } = await scopeToOrg(
+      supabaseAdmin.from('petty_cash_accounts').select('*'),
+      req,
+    )
       .eq('branch_id', body.branchId)
       .maybeSingle();
     if (!account) throw NotFound('Petty cash account not found for this branch');
     if (Number(body.amount) > Number(account.spend_limit ?? 0)) throw Conflict('Amount exceeds the petty cash spend limit');
     const after = Number(account.balance) - Number(body.amount);
     if (after < 0) throw Conflict('Insufficient petty cash balance');
-    await supabaseAdmin
-      .from('petty_cash_accounts')
-      .update({ balance: after.toFixed(2), updated_at: new Date().toISOString() })
-      .eq('id', account.id);
+    await scopeToOrg(
+      supabaseAdmin
+        .from('petty_cash_accounts')
+        .update({ balance: after.toFixed(2), updated_at: new Date().toISOString() }),
+      req,
+    ).eq('id', account.id);
     await supabaseAdmin.from('petty_cash_movements').insert({
       org_id: orgOf(req),
       branch_id: body.branchId,
@@ -1023,7 +1037,7 @@ accountingRouter.post(
   validate(requisitionDecisionSchema),
   asyncHandler(async (req: RequestWithAuth, res) => {
     const body = req.body as { decision: 'approve' | 'reject'; note?: string };
-    const { data, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from('fund_requisitions')
       .update({
         status: body.decision === 'approve' ? 'approved' : 'rejected',
@@ -1032,9 +1046,9 @@ accountingRouter.post(
         note: body.note ?? null,
       })
       .eq('id', req.params['id'] as string)
-      .eq('status', 'requested')
-      .select('id')
-      .maybeSingle();
+      .eq('status', 'requested');
+    query = scopeToOrg(query, req);
+    const { data, error } = await query.select('id').maybeSingle();
     if (error || !data) throw NotFound('Requisition not found or already decided');
     res.json({ ok: true });
   }),
@@ -1044,13 +1058,13 @@ accountingRouter.post(
   '/requisitions/:id/disburse',
   requirePermission('savings:write'),
   asyncHandler(async (req: RequestWithAuth, res) => {
-    const { data, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from('fund_requisitions')
       .update({ status: 'disbursed' })
       .eq('id', req.params['id'] as string)
-      .eq('status', 'approved')
-      .select('id')
-      .maybeSingle();
+      .eq('status', 'approved');
+    query = scopeToOrg(query, req);
+    const { data, error } = await query.select('id').maybeSingle();
     if (error || !data) throw NotFound('Requisition not found or not approved');
     res.json({ ok: true });
   }),
@@ -1060,13 +1074,13 @@ accountingRouter.post(
   '/requisitions/:id/receive',
   requirePermission('savings:write'),
   asyncHandler(async (req: RequestWithAuth, res) => {
-    const { data, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from('fund_requisitions')
       .update({ status: 'received' })
       .eq('id', req.params['id'] as string)
-      .eq('status', 'disbursed')
-      .select('id')
-      .maybeSingle();
+      .eq('status', 'disbursed');
+    query = scopeToOrg(query, req);
+    const { data, error } = await query.select('id').maybeSingle();
     if (error || !data) throw NotFound('Requisition not found or not disbursed');
     res.json({ ok: true });
   }),
@@ -1399,13 +1413,9 @@ accountingRouter.post(
     const body = req.body as { note: string };
     // Reopen = delete the close row (migration 0030 semantics: the
     // fn_period_locked trigger ignores deleted rows, unlocking the period).
-    const del = await supabaseAdmin
-      .from('period_closes')
-      .delete()
-      .eq('id', req.params['id'] as string)
-      .is('deleted_at', null)
-      .select('id')
-      .maybeSingle();
+    let query = supabaseAdmin.from('period_closes').delete().eq('id', req.params['id'] as string).is('deleted_at', null);
+    query = scopeToOrg(query, req);
+    const del = await query.select('id').maybeSingle();
     if (del.error && isMissingTableError(del.error)) throw Conflict(PERIOD_TABLES_HINT);
     if (del.error || !del.data) throw NotFound('Period close not found');
     res.json({ ok: true, note: body.note });

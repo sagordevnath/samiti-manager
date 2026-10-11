@@ -1,11 +1,13 @@
 import { Router } from 'express';
 import {
+  LIFECYCLE_TRANSITIONS,
   admissionCreateSchema,
   checkDuplicateMembership,
   duplicateCheckQuerySchema,
   memberCreateSchema,
+  memberSearchQuerySchema,
+  memberStatusChangeSchema,
   memberUpdateSchema,
-  paginationQuerySchema,
   type AdmissionCreateInput,
   type AdmissionStage,
   type AdmissionView,
@@ -17,6 +19,7 @@ import { requireAuth, requirePermission, type RequestWithAuth } from '../middlew
 import { asyncHandler } from '../middleware/error.js';
 import { validate } from '../middleware/validate.js';
 import { supabaseAdmin } from '../lib/supabase.js';
+import { scopesOrg } from '../lib/tenant.js';
 
 export const membersRouter = Router();
 
@@ -32,7 +35,10 @@ membersRouter.use(requireAuth);
 membersRouter.get(
   '/',
   requirePermission('member:read'),
-  validate(paginationQuerySchema, 'query'),
+  // memberSearchQuerySchema (not bare pagination): `validate` REPLACES req.query
+  // with the parsed object, so a narrower schema silently dropped q/status/
+  // branchId and the list could never be searched or filtered by review status.
+  validate(memberSearchQuerySchema, 'query'),
   asyncHandler(async (req, res) => {
     const { page, pageSize } = req.query as unknown as { page: number; pageSize: number };
     const branchId = (req.query as Record<string, unknown>).branchId;
@@ -69,7 +75,7 @@ membersRouter.get(
     }
     // Non-super users are scoped to their own org.
     const auth = (req as RequestWithAuth).auth;
-    if (auth?.orgId && auth.role !== 'super_admin') {
+    if (scopesOrg(auth)) {
       query = query.eq('org_id', auth.orgId);
     }
 
@@ -139,7 +145,7 @@ async function screenDuplicates(
     .is('deleted_at', null)
     .or(needles.join(','))
     .limit(200);
-  if (auth.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
+  if (scopesOrg(auth)) query = query.eq('org_id', auth.orgId);
 
   const { data, error } = await query;
   if (error) throw error;
@@ -209,7 +215,7 @@ membersRouter.get(
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
       .limit(100);
-    if (auth?.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
+    if (scopesOrg(auth)) query = query.eq('org_id', auth.orgId);
     const { data, error } = await query;
     if (error) throw error;
     res.json({ items: data ?? [] });
@@ -240,14 +246,18 @@ membersRouter.post(
     );
     if (duplicates.blocked) throw Conflict('দ্বৈত সদস্যপদ নিষিদ্ধ / Duplicate membership blocked');
 
-    // 2) Resolve the samity by name within the branch (optional link).
-    const { data: samity } = await supabaseAdmin
-      .from('samities')
-      .select('id')
-      .eq('branch_id', body.branchId)
-      .eq('name', draft.samityName)
-      .is('deleted_at', null)
-      .maybeSingle();
+    // 2) Resolve the samity by name within the branch (optional link — the
+    //    draft's samityName is optional, so skip the lookup entirely when
+    //    absent rather than matching the wrong row).
+    const { data: samity } = draft.samityName
+      ? await supabaseAdmin
+          .from('samities')
+          .select('id')
+          .eq('branch_id', body.branchId)
+          .eq('name', draft.samityName)
+          .is('deleted_at', null)
+          .maybeSingle()
+      : { data: null };
 
     // 3) Branch code for the response view.
     const { data: branch } = await supabaseAdmin.from('branches').select('code').eq('id', body.branchId).maybeSingle();
@@ -283,15 +293,19 @@ membersRouter.post(
         national_id: draft.idNumber,
         dob: draft.dob,
         address: draft.address,
-        working_area_id: draft.workingAreaId,
+        working_area_id: draft.workingAreaId ?? null,
         occupation: draft.occupation,
         monthly_household_income: draft.monthlyHouseholdIncome,
         land_owned_decimals: draft.landOwnedDecimals,
         family_members: draft.familyMembers,
         photo_path: draft.photoPath ?? null,
         signature_path: draft.signaturePath ?? null,
+        // A fresh admission lands in `pending` — the Members page surfaces it as
+        // "পর্যালোচনা / Review" until a manager approves it (`/members/:id/status`).
+        // member_status has no pending value, so the coarse column stays active
+        // while `lifecycle` (authoritative since 0005) carries the review state.
         status: 'active',
-        lifecycle: 'active',
+        lifecycle: 'pending',
         join_date: new Date().toISOString().slice(0, 10),
         created_by: auth.userId,
       })
@@ -347,7 +361,7 @@ membersRouter.post(
       eligibility: null,
       memberNumber: memberCode,
       passbookNo,
-      status: 'active',
+      status: 'pending',
     };
     res.status(201).json({ admission: view });
   }),
@@ -358,12 +372,16 @@ membersRouter.get(
   '/:id',
   requirePermission('member:read'),
   asyncHandler(async (req, res) => {
-    const { data, error } = await supabaseAdmin
+    const auth = (req as RequestWithAuth).auth;
+    let query = supabaseAdmin
       .from('members')
       .select('*')
       .eq('id', req.params['id'] as string)
-      .is('deleted_at', null)
-      .single();
+      .is('deleted_at', null);
+    // id-addressed read: without the tenant predicate the service client would
+    // happily return another organization's member row.
+    if (scopesOrg(auth)) query = query.eq('org_id', auth.orgId);
+    const { data, error } = await query.single();
 
     if (error || !data) throw NotFound('সদস্য পাওয়া যায়নি / Member not found');
     res.json({ member: data });
@@ -398,7 +416,7 @@ membersRouter.patch(
       .eq('id', req.params['id'] as string)
       .is('deleted_at', null);
     // Non-super users may only update rows inside their own org.
-    if (auth.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
+    if (scopesOrg(auth)) query = query.eq('org_id', auth.orgId);
 
     const { data, error } = await query
       .select(
@@ -408,6 +426,80 @@ membersRouter.patch(
 
     if (error || !data) throw NotFound('সদস্য পাওয়া যায়নি / Member not found');
     res.json({ member: data });
+  }),
+);
+
+/**
+ * member_status has no `pending` value, so lifecycle drives the UI badge while
+ * the coarse `status` column is kept consistent for any legacy reader.
+ */
+const COARSE_STATUS_BY_LIFECYCLE: Record<MemberLifecycle, 'active' | 'inactive' | 'closed'> = {
+  pending: 'active',
+  active: 'active',
+  dormant: 'inactive',
+  transferred: 'active',
+  dropout: 'closed',
+  deceased: 'closed',
+};
+
+/**
+ * POST /api/v1/members/:id/status — lifecycle transition with an audit row.
+ * Mirrors the demo router (members.demo.routes.ts) so the Members page works
+ * identically in both modes: pending → active is the admission "approve".
+ */
+membersRouter.post(
+  '/:id/status',
+  requirePermission('member:approve'),
+  validate(memberStatusChangeSchema),
+  asyncHandler(async (req, res) => {
+    const auth = (req as RequestWithAuth).auth!;
+    const body = req.body as { status: MemberLifecycle; reasonCode: string; note?: string; effectiveDate: string };
+
+    let query = supabaseAdmin
+      .from('members')
+      .select('id, org_id, lifecycle')
+      .eq('id', req.params['id'] as string)
+      .is('deleted_at', null);
+    if (scopesOrg(auth)) query = query.eq('org_id', auth.orgId);
+
+    const { data: member, error } = await query.maybeSingle();
+    if (error) throw error;
+    if (!member) throw NotFound('সদস্য পাওয়া যায়নি / Member not found');
+
+    const from = member.lifecycle as MemberLifecycle;
+    if (from === body.status) {
+      res.json({ member: { id: member.id, lifecycle: from } });
+      return;
+    }
+    const allowed = LIFECYCLE_TRANSITIONS[from] ?? [];
+    if (!allowed.includes(body.status)) {
+      throw Conflict(`অবৈধ স্থানান্তর ${from} → ${body.status} / Invalid status transition`);
+    }
+
+    // The read above already proved the row is in the caller's org, but the
+    // write carries the predicate too so the invariant is unconditional (the
+    // service client bypasses RLS).
+    let updateQuery = supabaseAdmin
+      .from('members')
+      .update({ lifecycle: body.status, status: COARSE_STATUS_BY_LIFECYCLE[body.status] })
+      .eq('id', member.id);
+    if (scopesOrg(auth)) updateQuery = updateQuery.eq('org_id', auth.orgId);
+    const { error: updateError } = await updateQuery;
+    if (updateError) throw updateError;
+
+    // Append-only lifecycle audit (0005). Never silently skipped — an audit gap
+    // is worse than a failed request.
+    const { error: historyError } = await supabaseAdmin.from('member_status_history').insert({
+      org_id: member.org_id,
+      member_id: member.id,
+      status: body.status,
+      reason_code: body.reasonCode,
+      note: body.note ?? null,
+      changed_by: auth.userId,
+    });
+    if (historyError) throw historyError;
+
+    res.json({ member: { id: member.id, lifecycle: body.status } });
   }),
 );
 
@@ -423,10 +515,14 @@ membersRouter.delete(
       .update({ deleted_at: new Date().toISOString() })
       .eq('id', req.params['id'] as string)
       .is('deleted_at', null);
-    if (auth.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
+    if (scopesOrg(auth)) query = query.eq('org_id', auth.orgId);
 
-    const { error } = await query;
+    // PostgREST reports no error when the filter matches nothing, so the row is
+    // read back: an unknown, already-deleted or other-org member must 404
+    // instead of answering a silent 204.
+    const { data, error } = await query.select('id').maybeSingle();
     if (error) throw error;
+    if (!data) throw NotFound('সদস্য পাওয়া যায়নি / Member not found');
     res.status(204).send();
   }),
 );

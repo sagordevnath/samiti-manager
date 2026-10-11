@@ -54,6 +54,7 @@ import { asyncHandler } from '../middleware/error.js';
 import { validate } from '../middleware/validate.js';
 import { requireAuth, requirePermission, type RequestWithAuth } from '../middleware/auth.js';
 import { supabaseAdmin } from '../lib/supabase.js';
+import { orgOf } from '../lib/tenant.js';
 
 interface Viewer {
   userId: string;
@@ -64,7 +65,6 @@ interface Viewer {
 export const programsLiveRouter = Router();
 programsLiveRouter.use(requireAuth);
 
-const orgOf = (req: RequestWithAuth) => req.auth!.orgId ?? '';
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const nowIso = () => new Date().toISOString();
 
@@ -225,7 +225,7 @@ programsLiveRouter.post(
     if (!canTransitionProject(row['status'] as ProjectStatus, to)) {
       throw Conflict(`অবৈধ প্রকল্প অবস্থান্তর ${String(row['status'])} → ${to} / Invalid project transition`);
     }
-    const { error } = await supabaseAdmin.from('projects').update({ status: to }).eq('id', row['id'] as string);
+    const { error } = await supabaseAdmin.from('projects').update({ status: to }).eq('id', row['id'] as string).eq('org_id', orgId);
     if (error) pgError(error);
     res.json(await projectToWire(orgId, { ...row, status: to }));
   }),
@@ -546,7 +546,7 @@ programsLiveRouter.post(
     if (!canTransitionActivity(data.status as never, to)) {
       throw Conflict(`অবৈধ অবস্থান্তর ${data.status} → ${to} / Invalid activity transition`);
     }
-    const up = await supabaseAdmin.from('program_activities').update({ status: to }).eq('id', data.id);
+    const up = await supabaseAdmin.from('program_activities').update({ status: to }).eq('id', data.id).eq('org_id', orgId);
     if (up.error) pgError(up.error);
     res.json({
       id: data.id, orgId: data.org_id, projectId: data.project_id, titleBn: data.title_bn, kind: data.kind,
@@ -1205,7 +1205,8 @@ programsLiveRouter.post(
     const upd = await supabaseAdmin
       .from('cases')
       .update({ status: to, closed_at: to === 'closed' ? nowIso() : data.closed_at })
-      .eq('id', data.id);
+      .eq('id', data.id)
+      .eq('org_id', orgId);
     if (upd.error) pgError(upd.error);
     await supabaseAdmin.from('case_access_log').insert({ org_id: orgId, case_id: data.id, user_id: viewer.userId, user_name: viewer.userName, action: to === 'closed' ? 'close' : 'update' });
     res.json(caseWire({ ...data, status: to, closed_at: to === 'closed' ? nowIso() : data.closed_at }));

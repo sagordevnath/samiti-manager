@@ -8,6 +8,7 @@ import { Router } from 'express';
 import {
   applicantCreateSchema,
   applicantStatusSchema,
+  applicantUpdateSchema,
   educationSchema,
   fieldCheckInSchema,
   holidaySchema as hrHolidayInputSchema,
@@ -19,6 +20,9 @@ import {
   staffUpdateSchema,
   vacancyCreateSchema,
   vacancyDecisionSchema,
+  vacancyUpdateSchema,
+  EDITABLE_VACANCY_STATUSES,
+  type VacancyStatus,
   appraisalSchema,
   disciplineCaseSchema,
   disciplineCloseSchema,
@@ -33,16 +37,12 @@ import { requireAuth, requirePermission, type RequestWithAuth } from '../middlew
 import { asyncHandler } from '../middleware/error.js';
 import { validate } from '../middleware/validate.js';
 import { supabaseAdmin } from '../lib/supabase.js';
+import { orgOf, scopeOrg, scopeToOrg } from '../lib/tenant.js';
 
 export const hrRouter = Router();
 hrRouter.use(requireAuth);
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
-const orgOf = (req: RequestWithAuth) => req.auth!.orgId ?? '';
-const scopeOrg = (req: RequestWithAuth) => {
-  const auth = req.auth!;
-  return Boolean(auth.orgId) && auth.role !== 'super_admin';
-};
 
 /** Row → camelCase Staff wire shape (ciphertexts never leave the API). */
 function staffWire(row: Record<string, unknown>) {
@@ -202,15 +202,42 @@ hrRouter.patch(
       patch['bank_account_enc'] = encryptIdNumber(String(body['bankAccount']), orgOf(req));
       patch['bank_masked'] = String(body['bankAccount']).slice(-4);
     }
-    const { data, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from('hr_staff')
       .update(patch)
       .eq('id', req.params['id'] as string)
-      .is('deleted_at', null)
-      .select('*')
-      .single();
+      .is('deleted_at', null);
+    query = scopeToOrg(query, req);
+    const { data, error } = await query.select('*').single();
     if (error || !data) throw NotFound('Staff not found');
     res.json(staffWire(data as Record<string, unknown>));
+  }),
+);
+
+/**
+ * Remove a staff row that was created by mistake.
+ *
+ * This is always a SOFT delete. `hr_attendance`, `hr_leave_requests`,
+ * `hr_payroll_items` and the posting/movement tables all hold NO ACTION
+ * references to `hr_staff` (migration 0032/0034), so a hard delete would fail
+ * the moment the person has any history — and payroll history has to survive
+ * an employee leaving anyway. Setting `deleted_at` hides the row from every
+ * list, detail and picker while the ledger keeps pointing at it.
+ */
+hrRouter.delete(
+  '/staff/:id',
+  requirePermission('org:manage'),
+  asyncHandler(async (req: RequestWithAuth, res) => {
+    let query = supabaseAdmin
+      .from('hr_staff')
+      .update({ deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .eq('id', req.params['id'] as string)
+      .is('deleted_at', null);
+    query = scopeToOrg(query, req);
+    const { data, error } = await query.select('id').maybeSingle();
+    if (error) throw error;
+    if (!data) throw NotFound('Staff not found');
+    res.status(204).end();
   }),
 );
 
@@ -218,14 +245,14 @@ hrRouter.post(
   '/staff/:id/confirm',
   requirePermission('org:manage'),
   asyncHandler(async (req: RequestWithAuth, res) => {
-    const { data, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from('hr_staff')
       .update({ status: 'confirmed', confirmation_date: todayStr(), updated_at: new Date().toISOString() })
       .eq('id', req.params['id'] as string)
       .eq('status', 'probation')
-      .is('deleted_at', null)
-      .select('*')
-      .single();
+      .is('deleted_at', null);
+    query = scopeToOrg(query, req);
+    const { data, error } = await query.select('*').single();
     if (error || !data) throw NotFound('Staff not found or not on probation');
     res.json(staffWire(data as Record<string, unknown>));
   }),
@@ -308,13 +335,91 @@ hrRouter.post(
   }),
 );
 
+/**
+ * Correct a mistyped vacancy request (wrong headcount or reason). Only a
+ * request that has not been rejected/closed can be corrected — once it is
+ * dead, delete it and raise a fresh one so the decision audit stays honest.
+ */
+hrRouter.patch(
+  '/vacancies/:id',
+  requirePermission('branch:manage'),
+  validate(vacancyUpdateSchema),
+  asyncHandler(async (req: RequestWithAuth, res) => {
+    const body = req.body as { branchId?: string; designation?: string; headcount?: number; reason?: string };
+    let lookup = supabaseAdmin
+      .from('hr_vacancies')
+      .select('id, status')
+      .eq('id', req.params['id'] as string)
+      .is('deleted_at', null);
+    lookup = scopeToOrg(lookup, req);
+    const { data: existing, error: findErr } = await lookup.maybeSingle();
+    if (findErr) throw findErr;
+    if (!existing) throw NotFound('Vacancy not found');
+    if (!EDITABLE_VACANCY_STATUSES.includes(existing.status as VacancyStatus)) {
+      throw Conflict('বাতিল/বন্ধ শূন্যপদ সম্পাদনা করা যায় না / A rejected or closed vacancy cannot be edited');
+    }
+
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (body.branchId !== undefined) patch['branch_id'] = body.branchId;
+    if (body.designation !== undefined) patch['designation'] = body.designation;
+    if (body.headcount !== undefined) patch['headcount'] = body.headcount;
+    if (body.reason !== undefined) patch['reason'] = body.reason;
+    const { error } = await scopeToOrg(supabaseAdmin.from('hr_vacancies').update(patch), req).eq('id', req.params['id'] as string);
+    if (error) throw error;
+    res.json({ ok: true });
+  }),
+);
+
+/**
+ * Withdraw a vacancy request made in error (soft delete — the decision audit
+ * on `hr_vacancies` is append-only, so the row stays).
+ *
+ * Order is load-bearing: `hr_applicants.vacancy_id` is a NO ACTION foreign key
+ * (migration 0032), so the dependency count is checked BEFORE the row is
+ * marked deleted and a vacancy that still has candidates answers 409 instead
+ * of vanishing from under the recruitment pipeline.
+ */
+hrRouter.delete(
+  '/vacancies/:id',
+  requirePermission('branch:manage'),
+  asyncHandler(async (req: RequestWithAuth, res) => {
+    let lookup = supabaseAdmin
+      .from('hr_vacancies')
+      .select('id')
+      .eq('id', req.params['id'] as string)
+      .is('deleted_at', null);
+    lookup = scopeToOrg(lookup, req);
+    const { data: existing, error: findErr } = await lookup.maybeSingle();
+    if (findErr) throw findErr;
+    if (!existing) throw NotFound('Vacancy not found');
+
+    const { count, error: countErr } = await supabaseAdmin
+      .from('hr_applicants')
+      .select('id', { count: 'exact', head: true })
+      .eq('vacancy_id', req.params['id'] as string);
+    if (countErr) throw countErr;
+    if ((count ?? 0) > 0) {
+      throw Conflict(
+        `এই শূন্যপদে ${count} জন আবেদনকারী আছে — আগে তাদের মুছুন / ${count} applicant(s) still reference this vacancy — remove them first`,
+      );
+    }
+
+    const { error } = await scopeToOrg(
+      supabaseAdmin.from('hr_vacancies').update({ deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() }),
+      req,
+    ).eq('id', req.params['id'] as string);
+    if (error) throw error;
+    res.status(204).end();
+  }),
+);
+
 hrRouter.post(
   '/vacancies/:id/decision',
   requirePermission('org:manage'),
   validate(vacancyDecisionSchema),
   asyncHandler(async (req: RequestWithAuth, res) => {
     const body = req.body as { decision: 'approve' | 'reject'; note?: string };
-    const { data, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from('hr_vacancies')
       .update({
         status: body.decision === 'approve' ? 'approved' : 'rejected',
@@ -323,9 +428,9 @@ hrRouter.post(
         note: body.note ?? null,
       })
       .eq('id', req.params['id'] as string)
-      .eq('status', 'requested')
-      .select('id')
-      .maybeSingle();
+      .eq('status', 'requested');
+    query = scopeToOrg(query, req);
+    const { data, error } = await query.select('id').maybeSingle();
     if (error || !data) throw NotFound('Vacancy not found or already decided');
     res.json({ ok: true });
   }),
@@ -390,9 +495,72 @@ hrRouter.patch(
     const body = req.body as { status: string; offeredSalary?: string | null };
     const patch: Record<string, unknown> = { status: body.status, updated_at: new Date().toISOString() };
     if (body.offeredSalary !== undefined) patch['offered_salary'] = body.offeredSalary;
-    const { error } = await supabaseAdmin.from('hr_applicants').update(patch).eq('id', req.params['id'] as string);
+    // The row is read back: a zero-row update means the applicant is unknown or
+    // belongs to another organization, which must 404 rather than answer `ok`.
+    const { data: updated, error } = await scopeToOrg(supabaseAdmin.from('hr_applicants').update(patch), req)
+      .eq('id', req.params['id'] as string)
+      .select('id')
+      .maybeSingle();
+    if (error) throw error;
+    if (!updated) throw NotFound('Applicant not found');
+    res.json({ ok: true });
+  }),
+);
+
+/**
+ * Correct an applicant's own details before the panel scores them. Interview
+ * scores, status and the offer are workflow state with their own endpoints, so
+ * they are not editable here. A candidate who already joined has become staff
+ * and their application is history — correct the staff record instead.
+ */
+hrRouter.patch(
+  '/applicants/:id',
+  requirePermission('branch:manage'),
+  validate(applicantUpdateSchema),
+  asyncHandler(async (req: RequestWithAuth, res) => {
+    const body = req.body as { name?: string; mobile?: string; educationLevel?: string; experienceYears?: number };
+    let lookup = supabaseAdmin.from('hr_applicants').select('id, status').eq('id', req.params['id'] as string);
+    lookup = scopeToOrg(lookup, req);
+    const { data: existing, error: findErr } = await lookup.maybeSingle();
+    if (findErr) throw findErr;
+    if (!existing) throw NotFound('Applicant not found');
+    if (existing.status === 'joined') {
+      throw Conflict('যোগদানকারী আবেদনকারী সম্পাদনাযোগ্য নয় — কর্মচারী রেকর্ড সম্পাদনা করুন / A joined applicant becomes staff — edit the staff record instead');
+    }
+
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (body.name !== undefined) patch['name'] = body.name;
+    if (body.mobile !== undefined) patch['mobile'] = body.mobile;
+    if (body.educationLevel !== undefined) patch['education_level'] = body.educationLevel;
+    if (body.experienceYears !== undefined) patch['experience_years'] = body.experienceYears;
+    const { error } = await scopeToOrg(supabaseAdmin.from('hr_applicants').update(patch), req).eq('id', req.params['id'] as string);
     if (error) throw error;
     res.json({ ok: true });
+  }),
+);
+
+/**
+ * Remove an applicant added by mistake. `hr_applicants` has no `deleted_at`
+ * and nothing references it, so this is a real delete — but a `joined`
+ * candidate is a person who is now on the payroll, so their application record
+ * is refused instead.
+ */
+hrRouter.delete(
+  '/applicants/:id',
+  requirePermission('branch:manage'),
+  asyncHandler(async (req: RequestWithAuth, res) => {
+    let lookup = supabaseAdmin.from('hr_applicants').select('id, status').eq('id', req.params['id'] as string);
+    lookup = scopeToOrg(lookup, req);
+    const { data: existing, error: findErr } = await lookup.maybeSingle();
+    if (findErr) throw findErr;
+    if (!existing) throw NotFound('Applicant not found');
+    if (existing.status === 'joined') {
+      throw Conflict('যোগদানকারী আবেদনকারী মুছে ফেলা যায় না — কর্মচারী রেকর্ড হিসেবে থাকবে / A joined applicant is staff and cannot be removed');
+    }
+
+    const { error } = await scopeToOrg(supabaseAdmin.from('hr_applicants').delete(), req).eq('id', req.params['id'] as string);
+    if (error) throw error;
+    res.status(204).end();
   }),
 );
 
@@ -402,17 +570,23 @@ hrRouter.post(
   validate(interviewScoreSchema),
   asyncHandler(async (req, res) => {
     const body = req.body as { panelist: string; score: number; note?: string | null };
-    const { data: current } = await supabaseAdmin
-      .from('hr_applicants')
-      .select('interview_scores')
+    const { data: current } = await scopeToOrg(
+      supabaseAdmin.from('hr_applicants').select('interview_scores'),
+      req,
+    )
       .eq('id', req.params['id'] as string)
       .maybeSingle();
-    const scores = [...((current?.interview_scores as unknown[]) ?? []), body];
-    const { error } = await supabaseAdmin
-      .from('hr_applicants')
-      .update({ interview_scores: scores, status: 'interviewed', updated_at: new Date().toISOString() })
-      .eq('id', req.params['id'] as string);
+    if (!current) throw NotFound('Applicant not found');
+    const scores = [...((current.interview_scores as unknown[]) ?? []), body];
+    const { data: updated, error } = await scopeToOrg(
+      supabaseAdmin.from('hr_applicants').update({ interview_scores: scores, status: 'interviewed', updated_at: new Date().toISOString() }),
+      req,
+    )
+      .eq('id', req.params['id'] as string)
+      .select('id')
+      .maybeSingle();
     if (error) throw error;
+    if (!updated) throw NotFound('Applicant not found');
     res.json({ ok: true });
   }),
 );
@@ -422,11 +596,17 @@ hrRouter.post(
   requirePermission('org:manage'),
   asyncHandler(async (req, res) => {
     const body = (req.body ?? {}) as { offeredSalary?: string };
-    const { error } = await supabaseAdmin
-      .from('hr_applicants')
-      .update({ status: 'offered', offered_salary: body.offeredSalary ?? '16500.00', updated_at: new Date().toISOString() })
-      .eq('id', req.params['id'] as string);
+    const { data: updated, error } = await scopeToOrg(
+      supabaseAdmin
+        .from('hr_applicants')
+        .update({ status: 'offered', offered_salary: body.offeredSalary ?? '16500.00', updated_at: new Date().toISOString() }),
+      req,
+    )
+      .eq('id', req.params['id'] as string)
+      .select('id')
+      .maybeSingle();
     if (error) throw error;
+    if (!updated) throw NotFound('Applicant not found');
     res.json({ ok: true });
   }),
 );
@@ -585,7 +765,7 @@ hrRouter.post(
   requirePermission('member:approve'),
   asyncHandler(async (req: RequestWithAuth, res) => {
     const body = req.body as { decision: 'approve' | 'reject' };
-    const { data, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from('hr_leave_requests')
       .update({
         status: body.decision === 'approve' ? 'approved' : 'rejected',
@@ -593,9 +773,9 @@ hrRouter.post(
         decided_at: new Date().toISOString(),
       })
       .eq('id', req.params['id'] as string)
-      .eq('status', 'pending')
-      .select('id')
-      .maybeSingle();
+      .eq('status', 'pending');
+    query = scopeToOrg(query, req);
+    const { data, error } = await query.select('id').maybeSingle();
     if (error || !data) throw NotFound('Leave request not found or already decided');
     res.json({ ok: true });
   }),
@@ -708,9 +888,12 @@ hrRouter.post(
       effectiveDate: string;
       reason: string;
     };
-    const { data: staff } = await supabaseAdmin
-      .from('hr_staff')
-      .select('branch_id, designation')
+    // Client-addressed staff lookup: without the tenant predicate a movement
+    // could be raised against another organization's staff row.
+    const { data: staff } = await scopeToOrg(
+      supabaseAdmin.from('hr_staff').select('branch_id, designation'),
+      req as RequestWithAuth,
+    )
       .eq('id', body.staffId)
       .maybeSingle();
     if (!staff) throw NotFound('Staff not found');
@@ -744,7 +927,7 @@ hrRouter.post(
   requirePermission('org:manage'),
   asyncHandler(async (req: RequestWithAuth, res) => {
     const body = req.body as { decision: 'approve' | 'reject' };
-    const { data, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from('hr_movements')
       .update({
         status: body.decision === 'approve' ? 'approved' : 'rejected',
@@ -752,18 +935,23 @@ hrRouter.post(
         approved_at: new Date().toISOString(),
       })
       .eq('id', req.params['id'] as string)
-      .eq('status', 'proposed')
-      .select('id, kind')
-      .maybeSingle();
+      .eq('status', 'proposed');
+    query = scopeToOrg(query, req);
+    const { data, error } = await query.select('id, kind').maybeSingle();
     if (error || !data) throw NotFound('Movement not found or already decided');
-    // Assign an order number on approval.
+    // Assign an order number on approval. The sequence count and the write both
+    // stay inside the caller's tenant.
     if (body.decision === 'approve') {
-      const { count } = await supabaseAdmin.from('hr_movements').select('id', { count: 'exact', head: true }).eq('kind', data.kind);
+      let countQuery = supabaseAdmin.from('hr_movements').select('id', { count: 'exact', head: true }).eq('kind', data.kind);
+      countQuery = scopeToOrg(countQuery, req);
+      const { count } = await countQuery;
       const prefix = data.kind === 'transfer' ? 'TRF' : 'PRM';
-      await supabaseAdmin
-        .from('hr_movements')
-        .update({ order_number: `${prefix}-${new Date().getFullYear()}-${String((count ?? 0) + 1).padStart(4, '0')}` })
-        .eq('id', data.id);
+      await scopeToOrg(
+        supabaseAdmin
+          .from('hr_movements')
+          .update({ order_number: `${prefix}-${new Date().getFullYear()}-${String((count ?? 0) + 1).padStart(4, '0')}` }),
+        req,
+      ).eq('id', data.id);
     }
     res.json({ ok: true });
   }),
@@ -773,9 +961,7 @@ hrRouter.post(
   '/movements/:id/apply',
   requirePermission('org:manage'),
   asyncHandler(async (req: RequestWithAuth, res) => {
-    const { data: mv } = await supabaseAdmin
-      .from('hr_movements')
-      .select('*')
+    const { data: mv } = await scopeToOrg(supabaseAdmin.from('hr_movements').select('*'), req)
       .eq('id', req.params['id'] as string)
       .maybeSingle();
     if (!mv) throw NotFound('Movement not found');
@@ -787,8 +973,8 @@ hrRouter.post(
     };
     if (mv.to_grade) patch['grade'] = mv.to_grade;
     if (mv.new_monthly_gross != null) patch['monthly_gross'] = mv.new_monthly_gross;
-    await supabaseAdmin.from('hr_staff').update(patch).eq('id', mv.staff_id);
-    await supabaseAdmin.from('hr_movements').update({ status: 'effective' }).eq('id', mv.id);
+    await scopeToOrg(supabaseAdmin.from('hr_staff').update(patch), req).eq('id', mv.staff_id);
+    await scopeToOrg(supabaseAdmin.from('hr_movements').update({ status: 'effective' }), req).eq('id', mv.id);
     res.json({ ok: true });
   }),
 );
@@ -1058,12 +1244,9 @@ hrRouter.post(
       action === 'pay'
         ? { status: 'paid', paid_at: new Date().toISOString() }
         : { status: 'approved', approved_by: req.auth!.userId, approved_at: new Date().toISOString() };
-    const { data, error } = await supabaseAdmin
-      .from('payroll_runs')
-      .update(patch)
-      .eq('id', req.params['id'] as string)
-      .select('id, status')
-      .maybeSingle();
+    let query = supabaseAdmin.from('payroll_runs').update(patch).eq('id', req.params['id'] as string);
+    query = scopeToOrg(query, req);
+    const { data, error } = await query.select('id, status').maybeSingle();
     if (error || !data) throw NotFound('Payroll run not found');
     res.json({ ok: true, status: data.status });
   }),
@@ -1341,12 +1524,12 @@ hrRouter.post(
   requirePermission('org:manage'),
   asyncHandler(async (req: RequestWithAuth, res) => {
     const body = (req.body ?? {}) as { note?: string };
-    const { data, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from('staff_appraisals')
       .update({ status: 'reviewed', reviewer_id: req.auth!.userId, reviewer_note: body.note ?? 'রিভিউ সম্পন্ন' })
-      .eq('id', req.params['id'] as string)
-      .select('id')
-      .maybeSingle();
+      .eq('id', req.params['id'] as string);
+    query = scopeToOrg(query, req);
+    const { data, error } = await query.select('id').maybeSingle();
     if (error || !data) throw NotFound('Appraisal not found');
     res.json({ ok: true });
   }),
@@ -1421,7 +1604,7 @@ hrRouter.post(
   asyncHandler(async (req: RequestWithAuth, res) => {
     requireHrDirector(req);
     const body = req.body as { explanation?: string | null; outcome: string };
-    const { data, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from('disciplinary_cases')
       .update({
         status: 'closed',
@@ -1430,9 +1613,9 @@ hrRouter.post(
         closed_by: req.auth!.userId,
         closed_at: new Date().toISOString(),
       })
-      .eq('id', req.params['id'] as string)
-      .select('id')
-      .maybeSingle();
+      .eq('id', req.params['id'] as string);
+    query = scopeToOrg(query, req);
+    const { data, error } = await query.select('id').maybeSingle();
     if (error || !data) throw NotFound('Case not found');
     res.json({ ok: true });
   }),

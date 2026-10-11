@@ -36,12 +36,12 @@ import { requireAuth, requirePermission, type RequestWithAuth } from '../middlew
 import { asyncHandler } from '../middleware/error.js';
 import { validate } from '../middleware/validate.js';
 import { supabaseAdmin } from '../lib/supabase.js';
+import { orgOf } from '../lib/tenant.js';
 import { maskedProtectedFieldLive, revealProtectedFieldLive } from './documents-live.routes.js';
 
 export const securityLiveRouter = Router();
 securityLiveRouter.use(requireAuth);
 
-const orgOf = (req: RequestWithAuth) => req.auth!.orgId ?? '';
 
 function viewerOf(req: RequestWithAuth): { userId: string; userName: string; role: string; ip: string | null } {
   return {
@@ -375,7 +375,7 @@ securityLiveRouter.post(
     if (data.user_id !== v.userId && !['super_admin', 'org_admin'].includes(v.role)) {
       throw BadRequest('শুধু নিজের ডিভাইস / Only your own devices');
     }
-    const { error: updErr } = await supabaseAdmin.from('user_devices').update({ revoked: true }).eq('id', data.id);
+    const { error: updErr } = await supabaseAdmin.from('user_devices').update({ revoked: true }).eq('id', data.id).eq('org_id', orgOf(req));
     if (updErr) throw updErr;
     res.json({ ...data, revoked: true });
   }),
@@ -463,7 +463,7 @@ securityLiveRouter.post(
     if (!totpVerify(data.secret_b32, (req.body as { code: string }).code, cfg.window)) {
       throw BadRequest('ভুল কোড / Wrong verification code');
     }
-    const { error: updErr } = await supabaseAdmin.from('user_totp').update({ confirmed: true, enabled: true, last_code: (req.body as { code: string }).code }).eq('user_id', v.userId);
+    const { error: updErr } = await supabaseAdmin.from('user_totp').update({ confirmed: true, enabled: true, last_code: (req.body as { code: string }).code }).eq('user_id', v.userId).eq('org_id', orgOf(req));
     if (updErr) throw updErr;
     res.json({ enabled: true });
   }),

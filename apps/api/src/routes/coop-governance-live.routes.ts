@@ -20,20 +20,22 @@ import {
   buildExitJournal,
   canTransitionDividendStatus,
   canTransitionExit,
+  claimRatio,
   computeExitNet,
   distributeDividend,
   memberExitSchema,
+  premiumVsPayout,
 } from '@samity/shared';
 import { BadRequest, Conflict, NotFound } from '../lib/errors.js';
 import { requireAuth, requirePermission, type RequestWithAuth } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/error.js';
 import { validate } from '../middleware/validate.js';
 import { supabaseAdmin } from '../lib/supabase.js';
+import { orgOf } from '../lib/tenant.js';
 
 export const coopGovLiveRouter = Router();
 coopGovLiveRouter.use(requireAuth);
 
-const orgOf = (req: RequestWithAuth) => req.auth!.orgId ?? '';
 const nowIso = () => new Date().toISOString();
 
 function pgError(err: unknown): never {
@@ -241,7 +243,7 @@ coopGovLiveRouter.post(
 
     if (body.action === 'agm_approve') {
       if (!canTransitionDividendStatus(row.status as never, 'agm_approved')) throw Conflict('অবৈধ অবস্থান্তর / Invalid transition');
-      const up = await supabaseAdmin.from('dividend_distributions').update({ status: 'agm_approved', updated_at: now }).eq('id', row.id);
+      const up = await supabaseAdmin.from('dividend_distributions').update({ status: 'agm_approved', updated_at: now }).eq('id', row.id).eq('org_id', orgId);
       if (up.error) pgError(up.error);
       return res.json(await distributionWire(orgId, fiscalYear));
     }
@@ -250,7 +252,7 @@ coopGovLiveRouter.post(
       if (!canTransitionDividendStatus(row.status as never, 'posted')) throw Conflict('প্রথমে সাধারণ সভার অনুমোদন প্রয়োজন / AGM approval required first');
       const journal = buildDividendJournal({ surplus: String(row.surplus), reservePct: Number(row.reserve_pct) });
       await pushJournal(orgId, journal.memo, journal.lines);
-      const up = await supabaseAdmin.from('dividend_distributions').update({ status: 'posted', updated_at: now }).eq('id', row.id);
+      const up = await supabaseAdmin.from('dividend_distributions').update({ status: 'posted', updated_at: now }).eq('id', row.id).eq('org_id', orgId);
       if (up.error) pgError(up.error);
       return res.json(await distributionWire(orgId, fiscalYear));
     }
@@ -270,12 +272,12 @@ coopGovLiveRouter.post(
     const destination = body.destination ?? 'savings';
     const journal = buildDividendPaymentJournal({ memberName: line.member_name, amount: String(line.amount), destination });
     await pushJournal(orgId, journal.memo, journal.lines);
-    const up = await supabaseAdmin
-      .from('dividend_lines')
-      .update({ destination, paid_at: now, updated_at: now })
-      .eq('id', line.id);
+    const up = await supabaseAdmin        .from('dividend_lines')
+        .update({ destination, paid_at: now, updated_at: now })
+        .eq('id', line.id)
+        .eq('org_id', orgId);
     if (up.error) pgError(up.error);
-    await supabaseAdmin.from('dividend_distributions').update({ status: 'paid', updated_at: now }).eq('id', row.id).eq('status', 'posted');
+    await supabaseAdmin.from('dividend_distributions').update({ status: 'paid', updated_at: now }).eq('id', row.id).eq('status', 'posted').eq('org_id', orgId);
     return res.json(await distributionWire(orgId, fiscalYear));
   }),
 );
@@ -365,7 +367,8 @@ coopGovLiveRouter.put(
     const up = await supabaseAdmin
       .from('agm_records')
       .update({ attendance: req.body['attendance'] ?? [], updated_at: nowIso() })
-      .eq('id', data.id);
+      .eq('id', data.id)
+      .eq('org_id', orgId);
     if (up.error) pgError(up.error);
     res.json(agmWire({ ...data, attendance: req.body['attendance'] ?? [] }));
   }),
@@ -386,7 +389,7 @@ coopGovLiveRouter.post(
     if (error) pgError(error);
     if (!data) throw NotFound('সভা পাওয়া যায়নি / AGM not found');
     const resolutions = [...((data.resolutions as unknown[]) ?? []), req.body];
-    const up = await supabaseAdmin.from('agm_records').update({ resolutions, updated_at: nowIso() }).eq('id', data.id);
+    const up = await supabaseAdmin.from('agm_records').update({ resolutions, updated_at: nowIso() }).eq('id', data.id).eq('org_id', orgId);
     if (up.error) pgError(up.error);
     res.status(201).json(agmWire({ ...data, resolutions }));
   }),
@@ -407,7 +410,7 @@ coopGovLiveRouter.post(
     if (error) pgError(error);
     if (!data) throw NotFound('সভা পাওয়া যায়নি / AGM not found');
     const elections = [...((data.elections as unknown[]) ?? []), req.body];
-    const up = await supabaseAdmin.from('agm_records').update({ elections, updated_at: nowIso() }).eq('id', data.id);
+    const up = await supabaseAdmin.from('agm_records').update({ elections, updated_at: nowIso() }).eq('id', data.id).eq('org_id', orgId);
     if (up.error) pgError(up.error);
     res.status(201).json(agmWire({ ...data, elections }));
   }),
@@ -437,7 +440,7 @@ coopGovLiveRouter.post(
     } else {
       patch = { ...patch, status: 'minutes_approved' };
     }
-    const up = await supabaseAdmin.from('agm_records').update(patch).eq('id', data.id);
+    const up = await supabaseAdmin.from('agm_records').update(patch).eq('id', data.id).eq('org_id', orgId);
     if (up.error) pgError(up.error);
     res.json(agmWire({ ...data, ...patch }));
   }),
@@ -534,7 +537,8 @@ coopGovLiveRouter.post(
       const up = await supabaseAdmin
         .from('member_exits')
         .update({ net_payable: netPayable, lines, status: 'computed', updated_at: now })
-        .eq('id', data.id);
+        .eq('id', data.id)
+        .eq('org_id', orgId);
       if (up.error) pgError(up.error);
       return res.json(exitWire({ ...data, net_payable: netPayable, lines, status: 'computed', updated_at: now }));
     }
@@ -544,7 +548,8 @@ coopGovLiveRouter.post(
       const up = await supabaseAdmin
         .from('member_exits')
         .update({ status: 'approved', decision_note: body.note ?? exit.decisionNote, updated_at: now })
-        .eq('id', data.id);
+        .eq('id', data.id)
+        .eq('org_id', orgId);
       if (up.error) pgError(up.error);
       return res.json(exitWire({ ...data, status: 'approved', decision_note: body.note ?? exit.decisionNote, updated_at: now }));
     }
@@ -554,7 +559,8 @@ coopGovLiveRouter.post(
       const up = await supabaseAdmin
         .from('member_exits')
         .update({ status: 'rejected', decision_note: body.note ?? '', updated_at: now })
-        .eq('id', data.id);
+        .eq('id', data.id)
+        .eq('org_id', orgId);
       if (up.error) pgError(up.error);
       return res.json(exitWire({ ...data, status: 'rejected', decision_note: body.note ?? '', updated_at: now }));
     }
@@ -568,9 +574,9 @@ coopGovLiveRouter.post(
     });
     await pushJournal(orgId, journal.memo, journal.lines);
     const up = await supabaseAdmin
-      .from('member_exits')
-      .update({ status: 'settled', settled_at: now, updated_at: now })
-      .eq('id', data.id);
+      .from('member_exits')        .update({ status: 'settled', settled_at: now, updated_at: now })
+        .eq('id', data.id)
+        .eq('org_id', orgId);
     if (up.error) pgError(up.error);
     return res.json(exitWire({ ...data, status: 'settled', settled_at: now, updated_at: now }));
   }),
@@ -598,6 +604,117 @@ coopGovLiveRouter.get(
     res.json({
       items: (data ?? []).map((j) => ({
         id: j.id, orgId: j.org_id, memo: j.memo, lines: j.lines, at: j.created_at,
+      })),
+    });
+  }),
+);
+
+/**
+ * Governance reports — identical payload to the demo `/coop/reports` so the
+ * Reports tab renders the same in demo and live. Sources: the insurance/welfare
+ * ledger (claim ratio, fund balances, premium-vs-payout by year) and the
+ * dividend distributions (status + paid/total member lines).
+ */
+coopGovLiveRouter.get(
+  '/reports',
+  requirePermission('member:read'),
+  asyncHandler(async (req, res) => {
+    const orgId = orgOf(req as RequestWithAuth);
+    const emptyFunds = [
+      { fund: 'member_welfare', labelBn: 'সদস্য কল্যাণ', balance: '0.00' },
+      { fund: 'staff_benevolent', labelBn: 'কর্মী সদয়', balance: '0.00' },
+      { fund: 'insurance', labelBn: 'বীমা', balance: '0.00' },
+    ];
+
+    const { data: ledger, error } = await supabaseAdmin
+      .from('welfare_ledger')
+      .select('fund, entry_type, amount, created_at')
+      .eq('org_id', orgId)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: true });
+    if (error && isMissingTableError(error)) {
+      res.json({
+        claimRatio: claimRatio({ premiums: '0', claimsPaid: '0', claimsWaived: '0' }),
+        premiumVsPayout: [],
+        funds: emptyFunds,
+        dividendStatus: [],
+      });
+      return;
+    }
+    if (error) pgError(error);
+    const rows = ledger ?? [];
+
+    const sum = (rs: { amount: unknown }[]) => rs.reduce((s, r) => s + Number(r.amount), 0);
+    const premiumRows = rows.filter((l) => l.entry_type === 'premium');
+    const claimPaid = rows.filter((l) => l.entry_type === 'claim_paid');
+    const claimWaived = rows.filter((l) => l.entry_type === 'claim_waiver');
+
+    const byYear = new Map<string, { premiums: number; payouts: number }>();
+    const bump = (at: string, key: 'premiums' | 'payouts', amount: number) => {
+      const year = at.slice(0, 4);
+      const row = byYear.get(year) ?? { premiums: 0, payouts: 0 };
+      row[key] += amount;
+      byYear.set(year, row);
+    };
+    for (const l of premiumRows) bump(l.created_at, 'premiums', Number(l.amount));
+    for (const l of [...claimPaid, ...claimWaived]) bump(l.created_at, 'payouts', Number(l.amount));
+
+    const inflow = ['contribution', 'premium', 'loan_repaid', 'adjustment'];
+    const fundBal = (fund: string) =>
+      Math.max(
+        0,
+        rows
+          .filter((l) => l.fund === fund)
+          .reduce((s, l) => s + (inflow.includes(l.entry_type) ? Number(l.amount) : -Number(l.amount)), 0),
+      ).toFixed(2);
+
+    const { data: dists, error: dErr } = await supabaseAdmin
+      .from('dividend_distributions')
+      .select('id, fiscal_year, status, pool_amount, reserve_amount')
+      .eq('org_id', orgId)
+      .order('fiscal_year', { ascending: false });
+    if (dErr && !isMissingTableError(dErr)) pgError(dErr);
+    const distRows = dists ?? [];
+
+    const counts = new Map<string, { total: number; paid: number }>();
+    if (distRows.length > 0) {
+      const { data: lines, error: lErr } = await supabaseAdmin
+        .from('dividend_lines')
+        .select('distribution_id, paid_at')
+        .eq('org_id', orgId)
+        .in('distribution_id', distRows.map((d) => d.id));
+      if (lErr && !isMissingTableError(lErr)) pgError(lErr);
+      for (const l of lines ?? []) {
+        const c = counts.get(l.distribution_id) ?? { total: 0, paid: 0 };
+        c.total += 1;
+        if (l.paid_at) c.paid += 1;
+        counts.set(l.distribution_id, c);
+      }
+    }
+
+    res.json({
+      claimRatio: claimRatio({
+        premiums: String(sum(premiumRows)),
+        claimsPaid: String(sum(claimPaid)),
+        claimsWaived: String(sum(claimWaived)),
+      }),
+      premiumVsPayout: premiumVsPayout(
+        [...byYear.entries()]
+          .sort()
+          .map(([period, v]) => ({ period, premiums: String(v.premiums), payouts: String(v.payouts) })),
+      ),
+      funds: [
+        { fund: 'member_welfare', labelBn: 'সদস্য কল্যাণ', balance: fundBal('member_welfare') },
+        { fund: 'staff_benevolent', labelBn: 'কর্মী সদয়', balance: fundBal('staff_benevolent') },
+        { fund: 'insurance', labelBn: 'বীমা', balance: fundBal('insurance') },
+      ],
+      dividendStatus: distRows.map((d) => ({
+        fiscalYear: d.fiscal_year,
+        status: d.status,
+        pool: String(d.pool_amount),
+        reserve: String(d.reserve_amount),
+        paidCount: counts.get(d.id)?.paid ?? 0,
+        total: counts.get(d.id)?.total ?? 0,
       })),
     });
   }),

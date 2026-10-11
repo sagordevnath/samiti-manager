@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requireAuth, requirePermission, type RequestWithAuth } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/error.js';
 import { supabaseAdmin } from '../lib/supabase.js';
+import { scopesOrg } from '../lib/tenant.js';
 
 export const dashboardRouter = Router();
 
@@ -17,7 +18,7 @@ dashboardRouter.get(
   requirePermission('member:read'),
   asyncHandler(async (req, res) => {
     const auth = (req as RequestWithAuth).auth!;
-    const scopeOrg = Boolean(auth.orgId) && auth.role !== 'super_admin';
+    const scopeOrg = scopesOrg(auth);
 
     const countOf = async (table: string, statusEq?: string, softDelete = true) => {
       let query = supabaseAdmin.from(table).select('id', { count: 'exact', head: true });

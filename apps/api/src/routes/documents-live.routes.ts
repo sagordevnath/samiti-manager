@@ -36,11 +36,11 @@ import { requireAuth, requirePermission, type RequestWithAuth } from '../middlew
 import { asyncHandler } from '../middleware/error.js';
 import { validate } from '../middleware/validate.js';
 import { supabaseAdmin } from '../lib/supabase.js';
+import { orgOf } from '../lib/tenant.js';
 import { newVerifyCode, printDocHtml, publicBaseUrl, qrDataUrl } from '../lib/doc-store.js';
 
 export const documentsLiveRouter = Router();
 
-const orgOf = (req: RequestWithAuth) => req.auth!.orgId ?? '';
 const viewerOf = (req: RequestWithAuth) => ({ userId: req.auth?.userId ?? 'unknown', name: req.auth?.email ?? 'unknown', role: req.auth?.role ?? 'member' });
 
 async function orgNameBnOf(orgId: string): Promise<string> {
@@ -353,6 +353,7 @@ documentsLiveRouter.post(
       .from('doc_templates')
       .update({ body: snap.body, orientation: snap.orientation, version: nextVersion, updated_by: viewer.name, updated_at: now })
       .eq('id', req.params['id'] as string)
+      .eq('org_id', orgId)
       .select('*')
       .single();
     if (tErr) throw tErr;
@@ -683,7 +684,7 @@ documentsLiveRouter.post(
       res.json(jobWire(job, items.map(itemWire)));
       return;
     }
-    await supabaseAdmin.from('bulk_jobs').update({ status: 'running' }).eq('id', String(job['id']));
+    await supabaseAdmin.from('bulk_jobs').update({ status: 'running' }).eq('id', String(job['id'])).eq('org_id', orgId);
     let processed = Number(job['processed'] ?? 0);
     let failed = Number(job['failed'] ?? 0);
     for (const item of items) {
@@ -697,7 +698,8 @@ documentsLiveRouter.post(
       await supabaseAdmin
         .from('bulk_job_items')
         .update({ status: result.error ? 'failed' : 'done', ref_id: result.refId, error: result.error })
-        .eq('id', String(item['id']));
+        .eq('id', String(item['id']))
+        .eq('org_id', orgId);
       processed += 1;
       if (result.error) failed += 1;
     }
@@ -707,6 +709,7 @@ documentsLiveRouter.post(
       .from('bulk_jobs')
       .update({ status, processed, failed, finished_at: now })
       .eq('id', String(job['id']))
+      .eq('org_id', orgId)
       .select('*')
       .single();
     if (error) throw error;
@@ -778,7 +781,7 @@ commBulkLiveRouter.post(
       res.json(jobWire(job, items.map(itemWire)));
       return;
     }
-    await supabaseAdmin.from('bulk_jobs').update({ status: 'running' }).eq('id', String(job['id']));
+    await supabaseAdmin.from('bulk_jobs').update({ status: 'running' }).eq('id', String(job['id'])).eq('org_id', orgId);
     let processed = Number(job['processed'] ?? 0);
     let failed = Number(job['failed'] ?? 0);
     for (const item of items) {
@@ -792,7 +795,8 @@ commBulkLiveRouter.post(
       await supabaseAdmin
         .from('bulk_job_items')
         .update({ status: result.error ? 'failed' : 'done', ref_id: result.refId, error: result.error })
-        .eq('id', String(item['id']));
+        .eq('id', String(item['id']))
+        .eq('org_id', orgId);
       processed += 1;
       if (result.error) failed += 1;
     }
@@ -802,6 +806,7 @@ commBulkLiveRouter.post(
       .from('bulk_jobs')
       .update({ status, processed, failed, finished_at: now })
       .eq('id', String(job['id']))
+      .eq('org_id', orgId)
       .select('*')
       .single();
     if (error) throw error;

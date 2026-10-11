@@ -41,6 +41,7 @@ import {
 } from '@samity/shared';
 import { AppError, BadRequest, Conflict, Forbidden, NotFound } from '../lib/errors.js';
 import { supabaseAdmin } from '../lib/supabase.js';
+import { scopesOrg, scopeToOrg } from '../lib/tenant.js';
 import { requireAuth, requirePermission, type RequestWithAuth } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/error.js';
 import { validate } from '../middleware/validate.js';
@@ -51,6 +52,7 @@ const num = (v: unknown): number => {
 };
 const money = (n: number): string => n.toFixed(2);
 const todayStr = (): string => new Date().toISOString().slice(0, 10);
+
 
 type CollectionEntryRow = {
   id: string;
@@ -503,11 +505,9 @@ async function postEntry(
   const pool = loanTotal + savingsTotal + extraTotal;
   const allocation = allocateCollectionPayment(row, { loanPaid: pool, savingsPaid: 0, extraPaid: 0 }, rules.allocationOrder);
 
-  const { data: member } = await supabaseAdmin
-    .from('members')
-    .select('id, full_name, member_code, org_id')
-    .eq('id', input.memberId)
-    .maybeSingle();
+  const memberQuery = supabaseAdmin.from('members').select('id, full_name, member_code, org_id').eq('id', input.memberId);
+  const ctxSubject = { orgId: ctx.orgId, role: ctx.officerRole };
+  const { data: member } = await (scopesOrg(ctxSubject) ? memberQuery.eq('org_id', ctx.orgId) : memberQuery).maybeSingle();
   if (!member) throw NotFound('Member not found');
 
   // 1) Installment allocations → mark paid on the stored schedule.
@@ -522,13 +522,15 @@ async function postEntry(
     if (num(inst.paid_amount) + num(t.amount) > num(inst.total) + 0.005) {
       throw Conflict(`Allocation exceeds the amount due on installment ${t.seq}`);
     }
-    const { error: upErr } = await supabaseAdmin
-      .from('loan_repayment_schedule')
-      .update({
-        paid_amount: money(Math.min(num(inst.paid_amount) + num(t.amount), num(inst.total))),
-        paid_at: input.meetingDate,
-      })
-      .eq('id', t.installmentId);
+    const { error: upErr } = await scopeToOrg(
+      supabaseAdmin
+        .from('loan_repayment_schedule')
+        .update({
+          paid_amount: money(Math.min(num(inst.paid_amount) + num(t.amount), num(inst.total))),
+          paid_at: input.meetingDate,
+        }),
+      ctxSubject,
+    ).eq('id', t.installmentId);
     if (upErr) throw upErr;
   }
 
@@ -812,7 +814,7 @@ collectionRouter.get(
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
       .limit(200);
-    if (auth.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
+    if (scopesOrg(auth)) query = query.eq('org_id', auth.orgId);
     const branchId = req.query['branchId'];
     if (typeof branchId === 'string' && branchId) query = query.eq('branch_id', branchId);
     const date = req.query['date'];
@@ -895,12 +897,15 @@ collectionRouter.get(
   asyncHandler(async (req: RequestWithAuth, res) => {
     const auth = req.auth!;
     const q = handoverQuerySchema.parse(req.query);
+    // NOTE: `cash_handovers.officer_id` has NO foreign key to users_profile
+    // (it is a plain uuid), so an embed here fails with PGRST200 and 500s the
+    // whole list. Officer names are resolved in a second query instead.
     let query = supabaseAdmin
       .from('cash_handovers')
-      .select('*, users_profile!cash_handovers_officer_id_fkey(full_name)')
+      .select('*')
       .order('handover_date', { ascending: false })
       .limit(200);
-    if (auth.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
+    if (scopesOrg(auth)) query = query.eq('org_id', auth.orgId);
     if (auth.branchId && !['branch_manager', 'org_admin', 'super_admin'].includes(auth.role)) {
       query = query.eq('officer_id', auth.userId);
     }
@@ -909,11 +914,20 @@ collectionRouter.get(
     if (q.status) query = query.eq('status', q.status);
     const { data, error } = await query;
     if (error) throw error;
+
+    // Resolve officer display names for the rows we are about to return.
+    const officerIds = [...new Set((data ?? []).map((r) => r.officer_id).filter((id): id is string => Boolean(id)))];
+    const officerNames = new Map<string, string>();
+    if (officerIds.length > 0) {
+      const { data: profiles } = await supabaseAdmin
+        .from('users_profile')
+        .select('id, full_name')
+        .in('id', officerIds);
+      for (const p of profiles ?? []) officerNames.set(p.id, p.full_name);
+    }
+
     res.json({
-      items: (data ?? []).map((row) => {
-        const profile = (row as { users_profile?: { full_name?: string } | null }).users_profile;
-        return mapHandover(row as HandoverRow, profile?.full_name ?? '—');
-      }),
+      items: (data ?? []).map((row) => mapHandover(row as HandoverRow, officerNames.get(row.officer_id) ?? '—')),
     });
   }),
 );
@@ -962,21 +976,20 @@ collectionRouter.post(
   asyncHandler(async (req: RequestWithAuth, res) => {
     const auth = req.auth!;
     const body = req.body as { countedAmount: string; officerNote?: string };
-    const { data: existing } = await supabaseAdmin
-      .from('cash_handovers')
-      .select('*')
+    const { data: existing } = await scopeToOrg(supabaseAdmin.from('cash_handovers').select('*'), auth)
       .eq('id', req.params['id'])
       .single();
     if (!existing) throw NotFound('Handover not found');
     if (existing.status !== 'draft') throw Conflict(`Only a draft handover can be submitted (status: ${existing.status})`);
-    const { data, error } = await supabaseAdmin
-      .from('cash_handovers')
-      .update({
+    const { data, error } = await scopeToOrg(
+      supabaseAdmin.from('cash_handovers').update({
         counted_amount: body.countedAmount,
         officer_note: body.officerNote ?? existing.officer_note,
         status: 'submitted',
         updated_at: new Date().toISOString(),
-      })
+      }),
+      auth,
+    )
       .eq('id', req.params['id'])
       .select('*')
       .single();
@@ -995,23 +1008,22 @@ collectionRouter.post(
       throw Forbidden('Only a Branch Manager can confirm or reject a handover');
     }
     const body = req.body as { decision: 'confirm' | 'reject'; receivedAmount?: string; accountantNote?: string };
-    const { data: existing } = await supabaseAdmin
-      .from('cash_handovers')
-      .select('*')
+    const { data: existing } = await scopeToOrg(supabaseAdmin.from('cash_handovers').select('*'), auth)
       .eq('id', req.params['id'])
       .single();
     if (!existing) throw NotFound('Handover not found');
     if (existing.status !== 'submitted') throw Conflict(`Only a submitted handover can be confirmed (status: ${existing.status})`);
-    const { data, error } = await supabaseAdmin
-      .from('cash_handovers')
-      .update({
+    const { data, error } = await scopeToOrg(
+      supabaseAdmin.from('cash_handovers').update({
         status: body.decision === 'confirm' ? 'confirmed' : 'rejected',
         received_amount: body.receivedAmount ?? (body.decision === 'confirm' ? existing.counted_amount : null),
         accountant_note: body.accountantNote ?? null,
         confirmed_by: auth.userId,
         confirmed_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-      })
+      }),
+      auth,
+    )
       .eq('id', req.params['id'])
       .select('*')
       .single();
@@ -1061,9 +1073,10 @@ collectionRouter.post(
       rows: rows.map((r) => ({ seq: r.seq, total: money(num(r.total)), interest: money(num(r.interest)), paidAmount: money(num(r.paid_amount)) })),
       serviceDeductionPercent: body.serviceDeductionPercent,
     });
-    const { data: app } = await supabaseAdmin
-      .from('loan_applications')
-      .select('org_id, branch_id, member_id, status')
+    const { data: app } = await scopeToOrg(
+      supabaseAdmin.from('loan_applications').select('org_id, branch_id, member_id, status'),
+      auth,
+    )
       .eq('id', body.applicationId)
       .single();
     if (!app) throw NotFound('Loan application not found');
@@ -1090,9 +1103,7 @@ collectionRouter.post(
       .select('*')
       .single();
     if (error) throw error;
-    await supabaseAdmin
-      .from('loan_applications')
-      .update({ status: 'closed', updated_at: new Date().toISOString() })
+    await scopeToOrg(supabaseAdmin.from('loan_applications').update({ status: 'closed', updated_at: new Date().toISOString() }), auth)
       .eq('id', body.applicationId)
       .eq('status', 'disbursed');
     const { data: member } = await supabaseAdmin.from('members').select('full_name').eq('id', app.member_id).maybeSingle();
@@ -1122,9 +1133,7 @@ collectionRouter.post(
     const auth = req.auth!;
     if (!auth.orgId) throw BadRequest('Organization is required');
     const body = req.body as { applicationId: string; shiftInstallments: number; reason: string; note: string };
-    const { data: app } = await supabaseAdmin
-      .from('loan_applications')
-      .select('org_id, branch_id')
+    const { data: app } = await scopeToOrg(supabaseAdmin.from('loan_applications').select('org_id, branch_id'), auth)
       .eq('id', body.applicationId)
       .single();
     if (!app) throw NotFound('Loan application not found');
@@ -1173,7 +1182,7 @@ collectionRouter.get(
   asyncHandler(async (req: RequestWithAuth, res) => {
     const auth = req.auth!;
     let query = supabaseAdmin.from('loan_reschedules').select('*').is('deleted_at', null).order('requested_at', { ascending: false });
-    if (auth.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
+    if (scopesOrg(auth)) query = query.eq('org_id', auth.orgId);
     const { data, error } = await query;
     if (error) throw error;
     res.json({ items: data ?? [] });
@@ -1192,9 +1201,7 @@ collectionRouter.post(
     const body = req.body as { decision: 'approved' | 'rejected' };
     // Apply the concrete shift when approving: push unpaid installments out by
     // N installments, keeping their day-of-week; record moved_rows.
-    const { data: rec } = await supabaseAdmin
-      .from('loan_reschedules')
-      .select('*')
+    const { data: rec } = await scopeToOrg(supabaseAdmin.from('loan_reschedules').select('*'), auth)
       .eq('id', req.params['id'])
       .single();
     if (!rec) throw NotFound('Reschedule not found');
@@ -1215,21 +1222,24 @@ collectionRouter.post(
         const old = new Date(`${r.due_date}T00:00:00Z`);
         const next = new Date(old.getTime() + (i + 1) * 7 * 86_400_000);
         movedRows.push({ seq: r.seq, oldDueDate: r.due_date, newDueDate: next.toISOString().slice(0, 10) });
-        await supabaseAdmin
-          .from('loan_repayment_schedule')
-          .update({ due_date: next.toISOString().slice(0, 10), shifted: true, shift_reason: `reschedule:${rec.id}` })
-          .eq('id', r.id);
+        await scopeToOrg(
+          supabaseAdmin
+            .from('loan_repayment_schedule')
+            .update({ due_date: next.toISOString().slice(0, 10), shifted: true, shift_reason: `reschedule:${rec.id}` }),
+          auth,
+        ).eq('id', r.id);
       }
     }
-    const { data, error } = await supabaseAdmin
-      .from('loan_reschedules')
-      .update({
+    const { data, error } = await scopeToOrg(
+      supabaseAdmin.from('loan_reschedules').update({
         status: body.decision,
         decided_by: auth.userId,
         decided_at: new Date().toISOString(),
         moved_rows: movedRows,
         updated_at: new Date().toISOString(),
-      })
+      }),
+      auth,
+    )
       .eq('id', rec.id)
       .select('*')
       .single();
@@ -1247,9 +1257,10 @@ collectionRouter.post(
     const auth = req.auth!;
     if (!auth.orgId) throw BadRequest('Organization is required');
     const body = req.body as { applicationId: string; reason: string; note: string };
-    const { data: app } = await supabaseAdmin
-      .from('loan_applications')
-      .select('org_id, branch_id')
+    // The application is client-addressed and its `org_id` is copied onto the
+    // write-off row — an unscoped read would let that row be created inside
+    // another tenant.
+    const { data: app } = await scopeToOrg(supabaseAdmin.from('loan_applications').select('org_id, branch_id'), auth)
       .eq('id', body.applicationId)
       .single();
     if (!app) throw NotFound('Loan application not found');
@@ -1282,7 +1293,7 @@ collectionRouter.get(
   asyncHandler(async (req: RequestWithAuth, res) => {
     const auth = req.auth!;
     let query = supabaseAdmin.from('loan_write_offs').select('*').is('deleted_at', null).order('requested_at', { ascending: false });
-    if (auth.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
+    if (scopesOrg(auth)) query = query.eq('org_id', auth.orgId);
     const { data, error } = await query;
     if (error) throw error;
     res.json({ items: data ?? [] });
@@ -1299,19 +1310,22 @@ collectionRouter.post(
       throw Forbidden('Only a Director of Operations / org admin can decide a write-off');
     }
     const body = req.body as { decision: 'recommended' | 'approved' | 'rejected'; decisionNote?: string };
-    const { data, error } = await supabaseAdmin
-      .from('loan_write_offs')
-      .update({
+    const { data, error } = await scopeToOrg(
+      supabaseAdmin.from('loan_write_offs').update({
         status: body.decision,
         decided_by: auth.userId,
         decided_at: new Date().toISOString(),
         decision_note: body.decisionNote ?? null,
         updated_at: new Date().toISOString(),
-      })
+      }),
+      auth,
+    )
       .eq('id', req.params['id'])
       .select('*')
       .single();
-    if (error) throw error;
+    // A zero-row update means the id is unknown, already gone or in another
+    // organization — all of which must read as 404, not a raw DB error.
+    if (error || !data) throw NotFound('Write-off not found');
     res.json(data);
   }),
 );
@@ -1327,9 +1341,7 @@ collectionRouter.post(
       throw Forbidden('Only a Branch Manager can reverse a wrong entry');
     }
     const body = req.body as { reason: string };
-    const { data: entry } = await supabaseAdmin
-      .from('collection_entries')
-      .select('*')
+    const { data: entry } = await scopeToOrg(supabaseAdmin.from('collection_entries').select('*'), auth)
       .eq('id', req.params['id'])
       .is('deleted_at', null)
       .single();
@@ -1364,10 +1376,7 @@ collectionRouter.post(
       .select('*')
       .single();
     if (error) throw error;
-    await supabaseAdmin
-      .from('collection_entries')
-      .update({ deleted_at: new Date().toISOString() })
-      .eq('id', entry.id);
+    await scopeToOrg(supabaseAdmin.from('collection_entries').update({ deleted_at: new Date().toISOString() }), auth).eq('id', entry.id);
     res.status(201).json({
       id: rev.id,
       entryId: rev.entry_id,
@@ -1394,7 +1403,7 @@ collectionRouter.get(
       .select('*')
       .order('created_at', { ascending: false })
       .limit(200);
-    if (auth.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
+    if (scopesOrg(auth)) query = query.eq('org_id', auth.orgId);
     const reviewed = req.query['reviewed'];
     if (reviewed === 'true') query = query.eq('reviewed', true);
     if (reviewed === 'false') query = query.eq('reviewed', false);
@@ -1409,13 +1418,14 @@ collectionRouter.post(
   requirePermission('loan:write'),
   asyncHandler(async (req: RequestWithAuth, res) => {
     const auth = req.auth!;
-    const { data, error } = await supabaseAdmin
-      .from('collection_fraud_flags')
-      .update({ reviewed: true, reviewed_by: auth.userId })
+    const { data, error } = await scopeToOrg(
+      supabaseAdmin.from('collection_fraud_flags').update({ reviewed: true, reviewed_by: auth.userId }),
+      auth,
+    )
       .eq('id', req.params['id'])
       .select('*')
       .single();
-    if (error) throw error;
+    if (error || !data) throw NotFound('Fraud flag not found');
     res.json(data);
   }),
 );

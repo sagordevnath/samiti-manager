@@ -8,6 +8,7 @@
  */
 import { Router } from 'express';
 import {
+  DELINQUENCY_SETTINGS_DEFAULTS,
   bucketForDaysPastDue,
   assetClassForDpd,
   provisionPercentFor,
@@ -27,6 +28,7 @@ import {
   writeOffRecoverySchema,
   provisionProposalSchema,
   type ClassifiedLoan,
+  type DelinquencySettings,
   type ParMetrics,
 } from '@samity/shared';
 import { Conflict, NotFound } from '../lib/errors.js';
@@ -34,33 +36,42 @@ import { requireAuth, requirePermission, type RequestWithAuth } from '../middlew
 import { asyncHandler } from '../middleware/error.js';
 import { validate } from '../middleware/validate.js';
 import { supabaseAdmin } from '../lib/supabase.js';
+import { orgOf, scopeOrg, scopeToOrg } from '../lib/tenant.js';
 
 export const delinquencyLiveRouter = Router();
 delinquencyLiveRouter.use(requireAuth);
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
-const orgOf = (req: RequestWithAuth) => req.auth!.orgId ?? '';
-const scopeOrg = (req: RequestWithAuth) => {
-  const auth = req.auth!;
-  return Boolean(auth.orgId) && auth.role !== 'super_admin';
-};
 
-/** Org settings row (defaults when missing). Exported for the MIS snapshot builder. */
-export async function loadSettings(orgId: string) {
+/**
+ * Org settings mapped to the canonical `DelinquencySettings` shape.
+ *
+ * The DB row is snake_case (`bucket_bounds`, `provisioning_pct`, …) while the
+ * shared classifier reads camelCase (`s.buckets`, `s.assetClassByDpd`, …).
+ * Returning the raw row made every classifying endpoint read `undefined.d1_30`
+ * and 500 — so the row is always mapped here, over the shared defaults, and
+ * partial rows keep the missing fields. Exported for the MIS snapshot builder.
+ */
+export async function loadSettings(orgId: string): Promise<DelinquencySettings> {
   const { data } = await supabaseAdmin
     .from('delinquency_settings')
     .select('*')
     .eq('org_id', orgId)
     .maybeSingle();
-  return (
-    data ?? {
-      bucket_bounds: { d1_30: 30, d31_90: 90, d91_180: 180 },
-      provisioning_pct: { standard: 0, substandard: 25, doubtful: 50, bad: 100 },
-      asset_class_by_dpd: { substandard: 31, doubtful: 91, bad: 181 },
-      escalate_to_bm_days: 3,
-      escalate_to_am_days: 15,
-    }
-  );
+  const row = data as {
+    bucket_bounds?: Partial<DelinquencySettings['buckets']> | null;
+    provisioning_pct?: Partial<DelinquencySettings['provisioning']> | null;
+    asset_class_by_dpd?: Partial<DelinquencySettings['assetClassByDpd']> | null;
+    escalate_to_bm_days?: number | null;
+    escalate_to_am_days?: number | null;
+  } | null;
+  return {
+    buckets: { ...DELINQUENCY_SETTINGS_DEFAULTS.buckets, ...(row?.bucket_bounds ?? {}) },
+    provisioning: { ...DELINQUENCY_SETTINGS_DEFAULTS.provisioning, ...(row?.provisioning_pct ?? {}) },
+    assetClassByDpd: { ...DELINQUENCY_SETTINGS_DEFAULTS.assetClassByDpd, ...(row?.asset_class_by_dpd ?? {}) },
+    escalateToBmDays: row?.escalate_to_bm_days ?? DELINQUENCY_SETTINGS_DEFAULTS.escalateToBmDays,
+    escalateToAmDays: row?.escalate_to_am_days ?? DELINQUENCY_SETTINGS_DEFAULTS.escalateToAmDays,
+  };
 }
 
 /** Classify every active loan from the stored repayment schedule. Exported for MIS snapshots. */
@@ -364,13 +375,7 @@ delinquencyLiveRouter.get(
   requirePermission('loan:read'),
   asyncHandler(async (req, res) => {
     const s = await loadSettings(orgOf(req));
-    res.json({
-      buckets: s.bucket_bounds,
-      provisioning: s.provisioning_pct,
-      assetClassByDpd: s.asset_class_by_dpd,
-      escalateToBmDays: s.escalate_to_bm_days,
-      escalateToAmDays: s.escalate_to_am_days,
-    });
+    res.json(s);
   }),
 );
 
@@ -392,13 +397,7 @@ delinquencyLiveRouter.patch(
     );
     if (error) throw error;
     const s = await loadSettings(orgOf(req));
-    res.json({
-      buckets: s.bucket_bounds,
-      provisioning: s.provisioning_pct,
-      assetClassByDpd: s.asset_class_by_dpd,
-      escalateToBmDays: s.escalate_to_bm_days,
-      escalateToAmDays: s.escalate_to_am_days,
-    });
+    res.json(s);
   }),
 );
 
@@ -517,12 +516,12 @@ delinquencyLiveRouter.post(
   '/tasks/:id/complete',
   requirePermission('loan:write'),
   asyncHandler(async (req, res) => {
-    const { data, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from('delinquency_tasks')
       .update({ status: 'done', done_at: new Date().toISOString() })
-      .eq('id', req.params['id'] as string)
-      .select('id')
-      .maybeSingle();
+      .eq('id', req.params['id'] as string);
+    query = scopeToOrg(query, req as RequestWithAuth);
+    const { data, error } = await query.select('id').maybeSingle();
     if (error || !data) throw NotFound('Task not found');
     res.json({ ok: true });
   }),
@@ -584,23 +583,23 @@ delinquencyLiveRouter.post(
   validate(savingsAdjustmentSchema),
   asyncHandler(async (req: RequestWithAuth, res) => {
     const body = req.body as { loanId: string; amount: string; note?: string };
-    const { data: app } = await supabaseAdmin
-      .from('loan_applications')
-      .select('id, member_id')
+    // Both lookups are client-addressed (`loanId` from the body), so each has
+    // to carry the tenant predicate — the service client bypasses RLS and a
+    // guessed id must not move another organization's savings balance.
+    const { data: app } = await scopeToOrg(supabaseAdmin.from('loan_applications').select('id, member_id'), req)
       .eq('id', body.loanId)
       .maybeSingle();
     if (!app) throw NotFound('Loan not found');
-    const { data: account } = await supabaseAdmin
-      .from('savings_accounts')
-      .select('id, balance')
-      .eq('member_id', app.member_id)
-      .eq('status', 'active')
+    const { data: account } = await scopeToOrg(
+      supabaseAdmin.from('savings_accounts').select('id, balance').eq('member_id', app.member_id).eq('status', 'active'),
+      req,
+    )
       .limit(1)
       .maybeSingle();
     if (!account) throw Conflict('Member has no active savings account');
     if (Number(body.amount) > Number(account.balance)) throw Conflict('Adjustment exceeds the savings balance');
     const after = Number(account.balance) - Number(body.amount);
-    await supabaseAdmin.from('savings_accounts').update({ balance: after.toFixed(2) }).eq('id', account.id);
+    await scopeToOrg(supabaseAdmin.from('savings_accounts').update({ balance: after.toFixed(2) }), req).eq('id', account.id);
     await supabaseAdmin.from('savings_transactions').insert({
       org_id: orgOf(req),
       account_id: account.id,
@@ -729,7 +728,7 @@ delinquencyLiveRouter.post(
   requirePermission('loan:write'),
   asyncHandler(async (req: RequestWithAuth, res) => {
     const body = req.body as { decision: 'recommended' | 'approved' | 'rejected'; decisionNote?: string };
-    const { data, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from('loan_write_offs')
       .update({
         status: body.decision,
@@ -737,9 +736,9 @@ delinquencyLiveRouter.post(
         decided_at: new Date().toISOString(),
         decision_note: body.decisionNote ?? null,
       })
-      .eq('id', req.params['id'] as string)
-      .select('id')
-      .maybeSingle();
+      .eq('id', req.params['id'] as string);
+    query = scopeToOrg(query, req);
+    const { data, error } = await query.select('id').maybeSingle();
     if (error || !data) throw NotFound('Proposal not found');
     res.json({ ok: true });
   }),
@@ -915,12 +914,12 @@ delinquencyLiveRouter.post(
   '/early-warning/:id/acknowledge',
   requirePermission('loan:write'),
   asyncHandler(async (req: RequestWithAuth, res) => {
-    const { data, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from('early_warning_signals')
       .update({ acknowledged: true, acknowledged_by: req.auth!.userId, acknowledged_at: new Date().toISOString() })
-      .eq('id', req.params['id'] as string)
-      .select('id')
-      .maybeSingle();
+      .eq('id', req.params['id'] as string);
+    query = scopeToOrg(query, req);
+    const { data, error } = await query.select('id').maybeSingle();
     if (error || !data) throw NotFound('Signal not found');
     res.json({ ok: true });
   }),

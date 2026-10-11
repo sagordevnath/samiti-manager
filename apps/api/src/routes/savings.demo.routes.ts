@@ -15,6 +15,7 @@ import {
   shareAllotmentSchema,
 } from '@samity/shared';
 import { demoAuthUser } from '../lib/demo.js';
+import { dividendPreviewWire } from '../lib/dividend-wire.js';
 import { SavingsDemoError } from '../lib/savings-store.js';
 import {
   buildDemoPassbook,
@@ -26,10 +27,19 @@ import {
   runDemoReconciliation,
   savingsDemoStore,
 } from '../lib/savings-store.js';
+import { scopesOrg } from '../lib/tenant.js';
 import { requireAuth, requirePermission, type RequestWithAuth } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/error.js';
 import { validate } from '../middleware/validate.js';
 import { AppError, Conflict, Forbidden, NotFound } from '../lib/errors.js';
+
+/**
+ * Dividend previews are returned in the same wire shape as the live router so
+ * the Shares page renders identically in preview and production modes.
+ */
+function enrichDividendPreview(preview: ReturnType<typeof demoDividendPreview>) {
+  return dividendPreviewWire(preview, demoMemberName);
+}
 
 function demoError(err: unknown): never {
   if (err instanceof SavingsDemoError) {
@@ -185,7 +195,7 @@ savingsDemoRouter.post(
     const store = savingsDemoStore();
     const account = store.accounts.find((a) => a.id === body.accountId);
     if (!account) throw NotFound('Savings account not found');
-    if (auth.orgId && auth.role !== 'super_admin' && account.org_id !== auth.orgId) throw Forbidden();
+    if (scopesOrg(auth) && account.org_id !== auth.orgId) throw Forbidden();
     const product = store.products.find((p) => p.id === account.product_id);
     const amount = Number(body.amount);
     const isWithdrawal = ['withdrawal', 'adjustment', 'closure'].includes(body.type);
@@ -373,7 +383,7 @@ savingsDemoRouter.get(
     const product = store.products.find((p) => p.id === productId && p.product_type === 'share');
     if (!product?.face_value) throw NotFound('Share product not found');
     const faceValue: string = product.face_value;
-    res.json(demoDividendPreview(store, productId, surplus, payoutRate, faceValue));
+    res.json(enrichDividendPreview(demoDividendPreview(store, productId, surplus, payoutRate, faceValue)));
   }),
 );
 

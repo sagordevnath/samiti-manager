@@ -40,12 +40,12 @@ import { requireAuth, requirePermission, type RequestWithAuth } from '../middlew
 import { asyncHandler } from '../middleware/error.js';
 import { validate } from '../middleware/validate.js';
 import { supabaseAdmin } from '../lib/supabase.js';
+import { orgOf } from '../lib/tenant.js';
 import { sendMail, smtpFromEnv, smsProvider } from '../lib/comm-store.js';
 
 export const commLiveRouter = Router();
 commLiveRouter.use(requireAuth);
 
-const orgOf = (req: RequestWithAuth) => req.auth!.orgId ?? '';
 const viewerOf = (req: RequestWithAuth) => ({ userId: req.auth?.userId ?? 'unknown', name: req.auth?.email ?? 'unknown', role: req.auth?.role ?? 'member' });
 
 /* ── Rules & spend ────────────────────────────────────────────────────────── */
@@ -533,7 +533,11 @@ commLiveRouter.post(
           sent_at: out.ok ? new Date().toISOString() : null,
           next_retry_at: retryAt,
         })
-        .eq('id', String(row['id']));
+        .eq('id', String(row['id']))
+        // The row came from an org-scoped read above, but the write carries the
+        // predicate too: the service-role client bypasses RLS, so the invariant
+        // must hold in code.
+        .eq('org_id', orgId);
       if (updErr) throw updErr;
       if (out.ok && out.cost > 0) await bumpSpend(orgId, out.cost);
     }
@@ -626,7 +630,7 @@ commLiveRouter.post(
     if (data.user_id !== viewer.userId && !['super_admin', 'org_admin'].includes(viewer.role)) {
       throw Forbidden('শুধু নিজের নোটিফিকেশন / Only your own notifications');
     }
-    const { error: updErr } = await supabaseAdmin.from('notifications').update({ read: true }).eq('id', data.id);
+    const { error: updErr } = await supabaseAdmin.from('notifications').update({ read: true }).eq('id', data.id).eq('org_id', orgOf(req));
     if (updErr) throw updErr;
     res.json(notificationToWire({ ...data, read: true }));
   }),

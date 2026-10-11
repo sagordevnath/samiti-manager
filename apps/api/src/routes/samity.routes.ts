@@ -10,12 +10,18 @@ import { Conflict, NotFound } from '../lib/errors.js';
 import { isDemoMode } from '../lib/demo.js';
 import { orgDemoStore } from '../lib/org-store.js';
 import { supabaseAdmin } from '../lib/supabase.js';
+import { scopesOrg } from '../lib/tenant.js';
 import { requireAuth, requirePermission, type RequestWithAuth } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/error.js';
 import { validate } from '../middleware/validate.js';
 
 export const samityRouter = Router();
 samityRouter.use(requireAuth);
+
+/** Bilingual duplicate-code message for the samity create form. */
+function khadiCodeConflict(code: string): string {
+  return `এই শাখায় "${code}" কোডে সমিতি ইতিমধ্যে আছে / Samity code "${code}" already exists in this branch`;
+}
 
 samityRouter.get(
   '/',
@@ -34,7 +40,7 @@ samityRouter.get(
       .select('*, branches(code, name, name_bn)')
       .is('deleted_at', null)
       .order('created_at', { ascending: false });
-    if (auth.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
+    if (scopesOrg(auth)) query = query.eq('org_id', auth.orgId);
     const { data, error } = await query;
     if (error) throw error;
     res.json({ items: data ?? [] });
@@ -55,7 +61,7 @@ samityRouter.post(
       meetingDay: string;
       meetingTime: string;
       meetingPlace: string;
-      fieldOfficerId: string;
+      fieldOfficerId?: string;
       status?: string;
     };
 
@@ -70,15 +76,23 @@ samityRouter.post(
         meeting_day: body.meetingDay,
         meeting_time: body.meetingTime,
         meeting_place: body.meetingPlace,
-        field_officer_id: body.fieldOfficerId,
+        // Optional at creation: the officer is assigned later in formation.
+        field_officer_id: body.fieldOfficerId ?? null,
         status: body.status ?? 'forming',
         formation_stage: 'projection_recorded',
         created_by: auth.userId,
       })
-      .select('*')
+      .select('*, branches(code, name, name_bn)')
       .single();
 
-    if (error) throw error;
+    if (error) {
+      // samities_org_branch_code_idx — surface a usable bilingual message
+      // instead of a raw Postgres unique violation.
+      if (String(error.message).includes('samities_org_branch_code_idx') || String(error.code) === '23505') {
+        throw Conflict(khadiCodeConflict(body.code));
+      }
+      throw error;
+    }
     res.status(201).json({ samity: data });
   }),
 );
@@ -118,7 +132,7 @@ samityRouter.patch(
       .update(patch)
       .eq('id', req.params['id'] as string)
       .is('deleted_at', null);
-    if (auth.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
+    if (scopesOrg(auth)) query = query.eq('org_id', auth.orgId);
 
     const { data, error } = await query.select('*').single();
     if (error || !data) throw NotFound('Samity not found');
@@ -138,7 +152,7 @@ samityRouter.delete(
       .update({ deleted_at: new Date().toISOString() })
       .eq('id', req.params['id'] as string)
       .is('deleted_at', null);
-    if (auth.orgId && auth.role !== 'super_admin') query = query.eq('org_id', auth.orgId);
+    if (scopesOrg(auth)) query = query.eq('org_id', auth.orgId);
 
     const { error } = await query;
     if (error) throw error;
@@ -160,6 +174,12 @@ samityRouter.get(
   '/:id/groups',
   requirePermission('member:read'),
   asyncHandler(async (req, res) => {
+    // Demo mode has no group store yet — return an empty list rather than
+    // hitting the database, mirroring the other demo-aware GET handlers.
+    if (isDemoMode()) {
+      res.json({ items: [] });
+      return;
+    }
     const { data, error } = await supabaseAdmin.from('groups').select('*').eq('samity_id', req.params['id']).is('deleted_at', null).order('created_at');
     if (error) throw error;
     res.json({ items: data ?? [] });
@@ -218,12 +238,14 @@ samityRouter.post(
       status?: string;
     };
 
-    const limitChecks = await supabaseAdmin
+    let limitQuery = supabaseAdmin
       .from('samity_meetings')
       .select('id, meeting_date')
       .eq('samity_id', body.samityId)
       .eq('meeting_date', body.meetingDate)
       .is('deleted_at', null);
+    if (scopesOrg(auth)) limitQuery = limitQuery.eq('org_id', auth.orgId);
+    const limitChecks = await limitQuery;
 
     if (limitChecks.error) throw limitChecks.error;
     if (limitChecks.data && limitChecks.data.length >= 1) {
@@ -246,7 +268,9 @@ samityRouter.post(
 
     if (error) throw error;
 
-    const officerId = (await supabaseAdmin.from('samities').select('field_officer_id').eq('id', body.samityId).single()).data?.field_officer_id;
+    const samityLookup = supabaseAdmin.from('samities').select('field_officer_id').eq('id', body.samityId);
+    const officerId = (await (scopesOrg(auth) ? samityLookup.eq('org_id', auth.orgId) : samityLookup).single()).data
+      ?.field_officer_id;
     const sameDay = await supabaseAdmin
       .from('samity_meetings')
       .select('id, samity_id, meeting_date')
@@ -264,6 +288,26 @@ samityRouter.post(
     }
 
     res.status(201).json({ meeting: data });
+  }),
+);
+
+/** GET /api/v1/samities/:id/meetings — meetings scheduled for a samity. */
+samityRouter.get(
+  '/:id/meetings',
+  requirePermission('member:read'),
+  asyncHandler(async (req, res) => {
+    if (isDemoMode()) {
+      res.json({ items: [] });
+      return;
+    }
+    const { data, error } = await supabaseAdmin
+      .from('samity_meetings')
+      .select('*')
+      .eq('samity_id', req.params['id'])
+      .is('deleted_at', null)
+      .order('meeting_date', { ascending: true });
+    if (error) throw error;
+    res.json({ items: data ?? [] });
   }),
 );
 

@@ -51,6 +51,7 @@ import { requireAuth, requirePermission, type RequestWithAuth } from '../middlew
 import { asyncHandler } from '../middleware/error.js';
 import { validate } from '../middleware/validate.js';
 import { supabaseAdmin } from '../lib/supabase.js';
+import { orgOf } from '../lib/tenant.js';
 import { sendMail } from '../lib/mis-ops-store.js';
 import { buildLiveSnapshot, liveStandardReport } from './mis-live.routes.js';
 
@@ -58,7 +59,6 @@ export const misOpsLiveRouter = Router();
 misOpsLiveRouter.use(requireAuth);
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
-const orgOf = (req: RequestWithAuth) => req.auth!.orgId ?? '';
 const viewerOf = (req: RequestWithAuth) => ({ userId: req.auth?.userId ?? 'unknown', name: req.auth?.email ?? 'unknown', role: req.auth?.role ?? 'member' });
 
 /** RFC 5987 Content-Disposition: Bangla filenames need an ASCII fallback + filename*. */
@@ -203,7 +203,7 @@ misOpsLiveRouter.post(
     if (body.action === 'reject' && !['super_admin', 'org_admin', 'area_manager'].includes(viewer.role)) {
       throw Forbidden('প্রত্যাখ্যান শুধু ব্যবস্থাপক-স্তরে / Only managers may reject');
     }
-    const { data: updated, error: updErr } = await supabaseAdmin.from('complaints').update(patch).eq('id', rec.id).select('*').single();
+    const { data: updated, error: updErr } = await supabaseAdmin.from('complaints').update(patch).eq('id', rec.id).eq('org_id', orgOf(req)).select('*').single();
     if (updErr) throw updErr;
     res.json(complaintToWire(updated as Record<string, unknown>));
   }),
@@ -365,7 +365,7 @@ misOpsLiveRouter.delete(
     if (wire.ownerUserId !== viewer.userId && !['super_admin', 'org_admin'].includes(viewer.role)) {
       throw Forbidden('শুধু মালিক মুছতে পারেন / Only the owner may delete');
     }
-    const { error: delErr } = await supabaseAdmin.from('saved_reports').delete().eq('id', wire.id);
+    const { error: delErr } = await supabaseAdmin.from('saved_reports').delete().eq('id', wire.id).eq('org_id', orgOf(req));
     if (delErr) throw delErr;
     res.status(204).send();
   }),
@@ -526,7 +526,8 @@ async function deliverSchedule(orgId: string, s: ExportSchedule): Promise<{ stat
     await supabaseAdmin
       .from('export_schedules')
       .update({ last_run_at: now, last_status: status, last_error: error })
-      .eq('id', s.id);
+      .eq('id', s.id)
+      .eq('org_id', orgId);
     await supabaseAdmin.from('export_deliveries').insert({
       org_id: orgId,
       schedule_id: s.id,
@@ -614,7 +615,7 @@ misOpsLiveRouter.delete(
     if (wire.createdBy !== viewer.name && !['super_admin', 'org_admin'].includes(viewer.role)) {
       throw Forbidden('শুধু নির্মাতা মুছতে পারেন / Only the creator may delete');
     }
-    const { error: delErr } = await supabaseAdmin.from('export_schedules').delete().eq('id', wire.id);
+    const { error: delErr } = await supabaseAdmin.from('export_schedules').delete().eq('id', wire.id).eq('org_id', orgOf(req));
     if (delErr) throw delErr;
     res.status(204).send();
   }),

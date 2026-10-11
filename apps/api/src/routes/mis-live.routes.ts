@@ -49,17 +49,13 @@ import { requireAuth, requirePermission, type RequestWithAuth } from '../middlew
 import { asyncHandler } from '../middleware/error.js';
 import { validate } from '../middleware/validate.js';
 import { supabaseAdmin } from '../lib/supabase.js';
+import { orgOf, scopeOrg } from '../lib/tenant.js';
 import { classifyLoans, loadSettings } from './delinquency-live.routes.js';
 
 export const misLiveRouter = Router();
 misLiveRouter.use(requireAuth);
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
-const orgOf = (req: RequestWithAuth) => req.auth!.orgId ?? '';
-const scopeOrg = (req: RequestWithAuth) => {
-  const auth = req.auth!;
-  return Boolean(auth.orgId) && auth.role !== 'super_admin';
-};
 
 const dateRe = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -811,7 +807,11 @@ misLiveRouter.post(
     if (!data) throw NotFound('রিটার্ন পাওয়া যায়নি / Return not found');
     if (data.submitted_at) throw Conflict('ইতিমধ্যে দাখিল / Already submitted');
     const submittedAt = new Date().toISOString();
-    const { error: updErr } = await supabaseAdmin.from('regulatory_returns').update({ submitted_at: submittedAt }).eq('id', data.id);
+    // The read above is org-scoped for a non-super_admin; the write mirrors it
+    // so the id-addressed update can never reach another tenant's row.
+    let submitQuery = supabaseAdmin.from('regulatory_returns').update({ submitted_at: submittedAt }).eq('id', data.id);
+    if (scopeOrg(req)) submitQuery = submitQuery.eq('org_id', orgOf(req));
+    const { error: updErr } = await submitQuery;
     if (updErr) throw updErr;
     res.json({ id: data.id, submittedAt });
   }),
