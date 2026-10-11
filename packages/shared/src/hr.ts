@@ -213,6 +213,30 @@ export const vacancyDecisionSchema = z.object({
   note: z.string().trim().max(300).optional(),
 });
 
+/**
+ * Correcting a mistyped vacancy request. Every field is optional so the UI can
+ * PATCH just what the operator changed; the route refuses edits once the
+ * request has been rejected/closed (delete it and raise a fresh one instead).
+ */
+export const vacancyUpdateSchema = vacancyCreateSchema.partial();
+export type VacancyUpdateInput = z.infer<typeof vacancyUpdateSchema>;
+
+/** Statuses whose vacancy may still be corrected in place. */
+export const EDITABLE_VACANCY_STATUSES: readonly VacancyStatus[] = ['requested', 'approved'];
+
+/**
+ * Correcting an applicant's own details. Interview scores, status and offer
+ * carry workflow meaning and are changed through their own endpoints — never
+ * by a bulk edit — so they are deliberately not part of this schema.
+ */
+export const applicantUpdateSchema = z.object({
+  name: z.string().trim().min(3).max(120).optional(),
+  mobile: z.string().trim().regex(/^01\d{9}$/, '01XXXXXXXXX').optional(),
+  educationLevel: z.string().trim().min(2).max(40).optional(),
+  experienceYears: z.number().int().min(0).max(40).optional(),
+});
+export type ApplicantUpdateInput = z.infer<typeof applicantUpdateSchema>;
+
 export const APPLICANT_STATUSES = ['applied', 'shortlisted', 'interviewed', 'offered', 'joined', 'rejected'] as const;
 export type ApplicantStatus = (typeof APPLICANT_STATUSES)[number];
 
@@ -237,6 +261,7 @@ export const applicantCreateSchema = z.object({
   educationLevel: z.string().trim().min(2).max(40),
   experienceYears: z.number().int().min(0).max(40),
 });
+export type ApplicantCreateInput = z.infer<typeof applicantCreateSchema>;
 
 export const applicantStatusSchema = z.object({
   status: z.enum(APPLICANT_STATUSES),

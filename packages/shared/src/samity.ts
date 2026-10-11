@@ -26,7 +26,8 @@ export const samityCreateSchema = z.object({
   meetingDay: meetingDaySchema,
   meetingTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Meeting time must be HH:MM'),
   meetingPlace: z.string().trim().min(2).max(200),
-  fieldOfficerId: uuidSchema,
+  /** Field officer is assigned later during formation — optional at creation. */
+  fieldOfficerId: uuidSchema.optional(),
   status: z.enum(SAMITY_STATUS).default('forming'),
 });
 export type SamityCreateInput = z.infer<typeof samityCreateSchema>;

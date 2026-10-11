@@ -132,8 +132,12 @@ export const memberDraftSchema = z.object({
   // Contact & placement
   mobile: phoneBdSchema,
   address: z.string().trim().max(400),
-  workingAreaId: uuidSchema,
-  samityName: z.string().trim().min(2).max(80),
+  // Placement is optional at admission: an NGO-MFI may not have surveyed the
+  // village yet (working_areas is empty on a fresh project), and a bogus
+  // uuid would fail the working_area_id foreign key and silently lose the
+  // member. The branch is what is actually required (branch_id is NOT NULL).
+  workingAreaId: uuidSchema.optional(),
+  samityName: z.string().trim().min(2).max(80).optional(),
   // Socio-economic
   occupation: z.string().trim().min(2).max(80),
   monthlyHouseholdIncome: moneySchema,

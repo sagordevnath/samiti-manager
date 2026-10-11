@@ -1,5 +1,6 @@
 export * from './roles.js';
 export * from './schemas.js';
+export * from './user.js';
 export * from './nav.js';
 export * from './format.js';
 export * from './org.js';

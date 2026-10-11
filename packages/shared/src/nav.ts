@@ -55,7 +55,7 @@ export const NAV: readonly NavGroup[] = [
     key: 'administration',
     items: [
       { key: 'branches', to: '/branches', icon: 'Building2', permission: 'branch:manage' },
-      { key: 'orgTree', to: '/organization/tree', icon: 'Landmark', permission: 'org:manage' },
+      { key: 'orgTree', to: '/organization', icon: 'Landmark', permission: 'org:manage' },
       { key: 'workingAreas', to: '/working-areas', icon: 'MapPinned', permission: 'branch:manage' },
       { key: 'map', to: '/map', icon: 'Map', permission: 'branch:manage' },
       { key: 'users', to: '/users', icon: 'UserCog', permission: 'user:manage' },

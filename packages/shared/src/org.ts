@@ -146,13 +146,30 @@ export type GeoImportResult = z.infer<typeof geoImportResultSchema>;
 /** ── Tree view ───────────────────────────────────────────────────────────── */
 export interface TreeNodeCounts {
   members: number;
+  /** Samities (centers) below a branch/area/zone/org node. */
   centers: number;
+  /** Groups below a samity node (optional — only samity leaves report it). */
+  groups?: number;
   outstandingLoans: string; // numeric(14,2) as string (BDT)
 }
 
+/**
+ * NGO-MFI operating hierarchy (head office → field):
+ * Organization → Zone → Area → Branch → Samity/Center → Group.
+ * Working areas (villages) hang off their branch as geographic leaves.
+ */
+export type OrgTreeNodeKind =
+  | 'organization'
+  | 'zone'
+  | 'area'
+  | 'branch'
+  | 'samity'
+  | 'group'
+  | 'working_area';
+
 export interface OrgTreeNode {
   id: string;
-  kind: 'organization' | 'zone' | 'area' | 'branch' | 'working_area';
+  kind: OrgTreeNodeKind;
   name: string;
   nameBn: string | null;
   code?: string;
