@@ -35,14 +35,14 @@ Counts: 58 migrations · 44 API routers · 49 web pages · 6 live-router test fi
   then clear the remaining errors per workspace (`npx eslint . --fix` handles a
   few). Do not silence rules wholesale.
 
-- [ ] **P0-2 · Land the uncommitted work safely.**
-  The working tree holds **80 modified + 32 untracked files** — essentially
-  every module built in recent sessions (live routers, tests, tenant helper,
-  users module, docs). Nothing is committed, so any mishap loses it. Fix: run
-  `npm run secrets:scan`, review the diff, split into coherent commits
-  (foundation → routers → tests → docs), and push once CI (P0-1) is green.
-  Do not blanket `git add -A`; several scratch scripts under `.freebuff/` should
-  not be committed.
+- [x] **P0-2 · Land the uncommitted work safely.** _Landed 2026-10-11 in 7
+  commits (`b095834`..`ad52c01`, 106 files: demo seed → shared types → api
+  foundation → live routers → tests → web → docs), split foundation → routers →
+  tests → docs. A secret scan found real Supabase values in `.env.example`
+  (introduced by `6041f4a`) and restored the original placeholders; the values
+  remain in git history, so rotate `SUPABASE_JWT_SECRET` if it was real. Scratch
+  files under `.freebuff/` were left untracked as intended. Push still waits on
+  P0-1._
 
 ## P1 — Needed for real operations
 
