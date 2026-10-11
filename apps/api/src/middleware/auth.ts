@@ -29,19 +29,56 @@ interface JwksKey extends JsonWebKey {
   alg?: string;
 }
 
-/** Short-lived cache of the project's asymmetric signing keys (10 minutes). */
-let jwksCache: { keys: JwksKey[]; at: number } | null = null;
+/** Algorithms accepted on the asymmetric path — never read from the token. */
+const ASYMMETRIC_ALGS: jwt.Algorithm[] = ['ES256', 'RS256'];
 
-async function fetchJwks(): Promise<JwksKey[]> {
-  if (jwksCache && Date.now() - jwksCache.at < 600_000) return jwksCache.keys;
-  const base = env.SUPABASE_URL ?? '';
+/** Short-lived cache of the project's asymmetric signing keys (10 minutes). */
+const JWKS_TTL_MS = 600_000;
+/** Minimum gap between forced refreshes so stale-token bursts cannot stampede JWKS. */
+const JWKS_REFRESH_MIN_GAP_MS = 5_000;
+
+let jwksCache: { keys: JwksKey[]; at: number } | null = null;
+let jwksInFlight: Promise<JwksKey[]> | null = null;
+let lastForcedRefreshAt = 0;
+
+async function loadJwks(): Promise<JwksKey[]> {
+  const base = (env.SUPABASE_URL ?? '').replace(/\/+$/, '');
   if (!base || base.includes('placeholder')) throw new Error('no supabase url');
-  const res = await fetch(`${base}/auth/v1/.well-known/jwks.json`);
+  const res = await fetch(`${base}/auth/v1/.well-known/jwks.json`, { signal: AbortSignal.timeout(5_000) });
   if (!res.ok) throw new Error(`jwks fetch failed: ${res.status}`);
   const body = (await res.json()) as { keys?: JwksKey[] };
   if (!body.keys?.length) throw new Error('jwks empty');
   jwksCache = { keys: body.keys, at: Date.now() };
   return body.keys;
+}
+
+async function fetchJwks(force = false): Promise<JwksKey[]> {
+  if (jwksCache && !force && Date.now() - jwksCache.at < JWKS_TTL_MS) return jwksCache.keys;
+  if (!force && jwksInFlight) return jwksInFlight;
+  if (force && jwksCache && Date.now() - lastForcedRefreshAt < JWKS_REFRESH_MIN_GAP_MS) return jwksCache.keys;
+  if (force) lastForcedRefreshAt = Date.now();
+  const pending = loadJwks();
+  jwksInFlight = pending;
+  try {
+    return await pending;
+  } finally {
+    if (jwksInFlight === pending) jwksInFlight = null;
+  }
+}
+
+/** Resolve the token's signing key; a kid miss usually means Supabase
+ *  rotated its key after our cache filled, so refresh once and retry. */
+async function findSigningKey(kid?: string): Promise<JwksKey | undefined> {
+  let keys = await fetchJwks();
+  if (kid) {
+    const hit = keys.find((k) => k.kid === kid);
+    if (hit) return hit;
+    keys = await fetchJwks(true);
+    return keys.find((k) => k.kid === kid);
+  }
+  // Supabase access tokens always carry a kid; only tolerate a kidless token
+  // when the JWKS holds exactly one key (unambiguous).
+  return keys.length === 1 ? keys[0] : undefined;
 }
 
 function attachAuth(req: RequestWithAuth, payload: TokenPayload): void {
@@ -104,7 +141,7 @@ export function requireAuth(req: RequestWithAuth, _res: Response, next: NextFunc
   }
 
   try {
-    const payload = jwt.verify(token, env.SUPABASE_JWT_SECRET) as unknown as TokenPayload;
+    const payload = jwt.verify(token, env.SUPABASE_JWT_SECRET, { algorithms: ['HS256'] }) as unknown as TokenPayload;
     attachAuth(req, payload);
     next();
     return;
@@ -112,19 +149,22 @@ export function requireAuth(req: RequestWithAuth, _res: Response, next: NextFunc
     // Fall through to the JWKS path (asymmetric signing keys).
   }
 
-  // Asymmetric-key path: look the token's `kid` up in the project JWKS.
+  // Asymmetric-key path: look the token's `kid` up in the project JWKS. The
+  // accepted algorithms are pinned here — never read from the token header —
+  // so an alg-confusion token (e.g. HS256-"signed" with the public key, or
+  // alg: none) is rejected before it can reach a verification call.
   void (async () => {
     try {
       const [rawHeader, rawPayload] = token.split('.');
       if (!rawHeader || !rawPayload) throw new Error('malformed token');
       const header = JSON.parse(Buffer.from(rawHeader, 'base64url').toString('utf8')) as { kid?: string; alg?: string };
-      const keys = await fetchJwks();
-      const jwk = keys.find((k) => k.kid === header.kid) ?? keys[0];
+      if (header.alg && !ASYMMETRIC_ALGS.includes(header.alg as jwt.Algorithm)) {
+        throw new Error(`unsupported alg ${header.alg}`);
+      }
+      const jwk = await findSigningKey(header.kid);
       if (!jwk) throw new Error('no matching signing key');
       const key = createPublicKey({ key: jwk as JsonWebKey, format: 'jwk' });
-      const payload = jwt.verify(token, key, {
-        algorithms: [(header.alg ?? 'ES256') as jwt.Algorithm],
-      }) as unknown as TokenPayload;
+      const payload = jwt.verify(token, key, { algorithms: ASYMMETRIC_ALGS }) as unknown as TokenPayload;
       attachAuth(req, payload);
       next();
     } catch (err) {
