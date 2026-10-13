@@ -9,9 +9,9 @@ P2 hardens quality, P3 is hygiene. Work top-down.
 | Check | Result |
 | --- | --- |
 | `npm run typecheck` (api + web + shared) | ✅ exit 0 |
-| `npm test` — api / shared / web | ✅ 496 + 246 + 7 = **749 passed** |
+| `npm test` — api / shared / web | ✅ 507 + 246 + 17 = **770 passed** |
 | `npm run build` | ✅ exit 0 (web bundle warning, see P2-1) |
-| `npm run lint` — api / web / shared | ❌ exit 1 every workspace (see P0-1) |
+| `npm run lint` — api / web / shared | ✅ exit 0 (was ❌; fixed in P0-1, 2026-10-12) |
 | `npm run format:check` | ❌ 487 files differ (see P2-4) |
 | RLS coverage audit (179 created tables) | ✅ 178 RLS-enabled; only `loan_application_seq` (helper sequence) is not, by design |
 | i18n key parity (`bn.json` vs `en.json`) | ✅ 137/137 |
@@ -20,20 +20,27 @@ P2 hardens quality, P3 is hygiene. Work top-down.
 
 Counts: 58 migrations · 44 API routers · 49 web pages · 6 live-router test files.
 
+**Deployment pass (2026-10-12).** A production-deployment review added the
+static-host wiring that was missing (`netlify.toml`, a runtime `/config.js` API
+override, an actionable "cannot reach the API" screen), a production `Dockerfile`
++ compose file, an explicit `DEMO_MODE` switch, and moved `dotenv` from
+devDependencies to dependencies — it is imported by `env.ts` at runtime, so a
+`--omit=dev` install would have crashed the production container. See
+`docs/deploy.md`.
+
 ---
 
 ## P0 — Blocking
 
-- [ ] **P0-1 · Fix lint so CI is green again.**
-  `npm run lint` fails in all three workspaces — api 88 errors/177 warnings,
-  web 31/83, shared 21/38 — and `.github/workflows/ci.yml` runs lint, so every
-  push/PR is currently red. Errors are mostly unused imports/vars and
-  `consistent-type-imports`; the loudest warning class is
-  `Resolve error: typescript with invalid interface loaded as resolver`
-  (`import/order`), i.e. the eslint-plugin-import TypeScript resolver is
-  misconfigured, not a real code smell. Fix: resolve the import resolver config,
-  then clear the remaining errors per workspace (`npx eslint . --fix` handles a
-  few). Do not silence rules wholesale.
+- [x] **P0-1 · Fix lint so CI is green again.** _Landed 2026-10-12. Root cause of
+  the loudest warning class was a missing `eslint-import-resolver-typescript`
+  (the config referenced a resolver that was not installed) — installing it as a
+  root devDependency removed ~294 bogus warnings. The remaining 132 errors were
+  all dead code (unused imports/vars/functions, one no-op self-assignment, one
+  `let`→`const`) and are cleared: `npm run lint` now exits 0 with 5 warnings.
+  Two genuine bugs surfaced while fixing them: `apps/api/src/routes/loans.routes.ts`
+  ran a dead `loan_policies` query on every stage advance, and the target-vs-actual
+  report queried `collection_entries` for a value it then discarded (see P1-8)._
 
 - [x] **P0-2 · Land the uncommitted work safely.** _Landed 2026-10-11 in 7
   commits (`b095834`..`ad52c01`, 106 files: demo seed → shared types → api
@@ -62,7 +69,15 @@ Counts: 58 migrations · 44 API routers · 49 web pages · 6 live-router test fi
 - [ ] **P1-3 · Monitoring and alerting.**
   No Sentry/log-drain integration; `apps/web/src/components/ErrorBoundary.tsx`
   has a placeholder comment. `docs/go-live.md` §5 requires an uptime monitor on
-  `/api/v1/health` plus error monitoring for web + api before go-live.
+  `/api/v1/health` plus error monitoring for web + api before go-live. The public
+  status page (`status/`, `docs/deploy.md` §9) covers the uptime half and reports
+  its own blind spots, but it cannot tell its own outage apart from a skipped
+  workflow run: an observer outside this stack — an alerting uptime monitor, or at
+  least one that records — is still missing.
+  _Uptime half landed 2026-10-12: `.github/workflows/keep-alive.yml` probes every
+  10 minutes and fails red when the API is not answering, and the public status
+  page in `status/` keeps D1-backed history (see `docs/deploy.md` §9). Error
+  monitoring and a log drain are still the open half._
 
 - [ ] **P1-4 · Verify backup restore end-to-end.**
   `.github/workflows/backup.yml` dumps nightly to artifacts (needs the
@@ -77,6 +92,20 @@ Counts: 58 migrations · 44 API routers · 49 web pages · 6 live-router test fi
 - [ ] **P1-6 · Accounting setup UI (chart of accounts + budgets).**
   `POST`/`PATCH /accounting/accounts` and `PUT /accounting/budgets` have no UI,
   so accounting cannot be configured without SQL. Ranked #3 in the CRUD review.
+
+- [ ] **P1-8 · Attribute collections to branches in target-vs-actual.**
+  `GET /api/v1/work/...` computes live actuals for members, disbursements and
+  savings but the `collection` metric always reports 0: the branch attribution
+  was never implemented (the old code queried `collection_entries` and then
+  discarded the result). The dead query has been removed and the gap is noted in
+  a code comment, so the report is honest but incomplete until a branch-attributed
+  sum is added.
+
+- [ ] **P1-9 · Verify the Docker image build in CI.**
+  `Dockerfile` + `docker-compose.yml` are new and were authored for this
+  release, but the build has not been executed end to end because no Docker
+  daemon was available in the authoring environment. Add a `docker build` job to
+  CI (or run it once manually) so the image cannot silently rot.
 
 - [ ] **P1-7 · Delinquency recovery actions UI.**
   Legal notices, waivers, task completion and savings adjustments
@@ -121,10 +150,10 @@ Counts: 58 migrations · 44 API routers · 49 web pages · 6 live-router test fi
 
 ## P3 — Hygiene
 
-- [ ] **P3-1 · Refresh `README.md`.**
-  It still describes migrations `0001_core.sql / 0002_rls.sql`, a Placeholder
-  page and the original four routers; the app now has 58 migrations, 44 routers,
-  49 pages and 749 tests. Add quick-start, environment and docs links.
+- [x] **P3-1 · Refresh `README.md`.** _Landed 2026-10-12: accurate counts
+  (58 migrations, 44 routers, 49 pages), a quick start that works with no cloud
+  account, a deployment section pointing at `docs/deploy.md`, a docs index and a
+  corrected repository tree._
 
 - [ ] **P3-2 · Tidy scratch tooling.**
   `.freebuff/` holds 7 audit scripts from review sessions and `scripts/` holds

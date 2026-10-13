@@ -11,7 +11,6 @@ import {
   computePar,
   provisionPercentFor,
   worklistLevelFor,
-  type AssetClass,
   type ClassifiedLoan,
   type DelinquencyBucket,
   type DelinquencyFollowUp,
@@ -114,11 +113,6 @@ function officerName(id: string | null): string | null {
   if (id === DEMO_BM_ID) return DEMO_BM_NAME;
   if (id === DEMO_AM_ID) return DEMO_AM_NAME;
   return 'Demo Admin (কেন্দ্র পরিচালক)';
-}
-
-/** The demo officer who owns every Dhaka samity. */
-function officerForBranch(branchId: string): string {
-  return DEMO_OFFICER_ID;
 }
 
 // ── 1) Nightly classification run ───────────────────────────────────────────

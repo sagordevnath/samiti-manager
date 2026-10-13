@@ -16,7 +16,6 @@ process.env['SUPABASE_JWT_SECRET'] = 'test-jwt-secret';
 
 let createAppRef: typeof import('./app.js').createApp;
 let resetAccountingStoreRef: typeof import('./lib/accounting-store.js').resetAccountingDemoStore;
-let accountingStoreRef: typeof import('./lib/accounting-store.js').accountingDemoStore;
 
 const DEMO_TOKEN = 'demo-token';
 const BRANCH_DHAKA = '00000000-0000-4000-8000-0000000000b1';
@@ -26,7 +25,6 @@ beforeEach(async () => {
   ({ createApp: createAppRef } = await import('./app.js'));
   const acc = await import('./lib/accounting-store.js');
   resetAccountingStoreRef = acc.resetAccountingDemoStore;
-  accountingStoreRef = acc.accountingDemoStore;
   resetAccountingStoreRef();
 });
 

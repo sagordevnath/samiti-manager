@@ -33,7 +33,6 @@ import {
   type VoucherType,
 } from '@samity/shared';
 import {
-  SAVINGS_CODES,
   checkVoucherPostingRules,
   buildBudgetVsActual,
   buildBalanceSheet,
@@ -53,15 +52,12 @@ import {
   type PeriodKind,
   type ReceiptsPaymentsReport,
   type RequisitionCreateInput,
-  type RequisitionKind,
-  type RequisitionStatus,
 } from '@samity/shared';
 import { orgDemoStore } from './org-store.js';
 
 const ORG = '00000000-0000-4000-8000-0000000000aa';
 const BRANCH_DHAKA = '00000000-0000-4000-8000-0000000000b1';
 const BRANCH_MYMENSINGH = '00000000-0000-4000-8000-0000000000b2';
-const CASH_CODE = '1010';
 
 export class AccountingDemoError extends Error {
   constructor(
@@ -207,26 +203,6 @@ function activeVouchers(store: AccountingDemoData): Voucher[] {
   return store.vouchers.filter((v) => v.status === 'approved');
 }
 
-function voucherLinesOf(store: AccountingDemoData, voucherId: string) {
-  return store.vouchers.find((v) => v.id === voucherId)?.lines ?? [];
-}
-
-/** Sum of debits (in) / credits (out) on cash-category accounts for a branch+date. */
-function cashTotalsFor(store: AccountingDemoData, branchId: string, date: string): { cashIn: number; cashOut: number } {
-  let cashIn = 0;
-  let cashOut = 0;
-  for (const v of activeVouchers(store)) {
-    if (v.branchId !== branchId || v.voucherDate !== date) continue;
-    for (const l of v.lines) {
-      const cat = accountByCode(store, l.accountCode)?.category;
-      if (cat !== 'cash') continue;
-      cashIn += num(l.debit);
-      cashOut += num(l.credit);
-    }
-  }
-  return { cashIn, cashOut };
-}
-
 /** Book balance of one GL account across approved vouchers (optionally branch-scoped). */
 function glBalance(store: AccountingDemoData, code: string, branchId?: string): number {
   let bal = 0;
@@ -261,7 +237,7 @@ export function listDemoAccounts(store: AccountingDemoData, includeInactive = fa
 export function createDemoAccount(
   store: AccountingDemoData,
   input: { code: string; name: string; nameBn: string; type: AccountType; category: AccountCategory; parentCode?: string | null; isActive?: boolean },
-  userId: string,
+  _userId: string,
 ): GlAccount {
   if (store.accounts.some((a) => a.code === input.code)) {
     throw new AccountingDemoError(409, 'CONFLICT', `Account code ${input.code} already exists`);
@@ -723,9 +699,6 @@ export function demoPettySpend(
 }
 
 // ── Ops (requirements 6–10) ──────────────────────────────────────────────────
-/** Fixed-asset GL codes blocked from savings funding (shared with trigger). */
-const FIXED_ASSET_CODES_API = ['1500', '1510', '1520'];
-
 function nodeOf(store: AccountingDemoData, id: string) {
   const n = store.nodes.find((x) => x.id === id);
   if (!n) throw new AccountingDemoError(400, 'VALIDATION_ERROR', `Unknown node ${id}`);
@@ -824,7 +797,7 @@ export function disburseDemoRequisition(store: AccountingDemoData, id: string, u
 }
 
 /** Receiving node confirms receipt — books its own side of the movement. */
-export function receiveDemoRequisition(store: AccountingDemoData, id: string, userId: string): FundRequisition {
+export function receiveDemoRequisition(store: AccountingDemoData, id: string, _userId: string): FundRequisition {
   const req = store.requisitions.find((r) => r.id === id);
   if (!req) throw new AccountingDemoError(404, 'NOT_FOUND', 'Requisition not found');
   if (req.status !== 'disbursed') {

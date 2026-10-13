@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import {
-  PERMISSIONS,
   areaCreateSchema,
   branchChecklistSchema,
   branchCreateSchema,
@@ -12,10 +11,7 @@ import {
   workingAreaAssignSchema,
   workingAreaSurveySchema,
   zoneCreateSchema,
-  type BranchMapPoint,
   type GeoCsvRow,
-  type OrgTreeNode,
-  type VillageMapPoint,
 } from '@samity/shared';
 import { isDemoMode } from '../lib/demo.js';
 import { Conflict, Forbidden, NotFound } from '../lib/errors.js';
@@ -38,12 +34,6 @@ function authOf(req: RequestWithAuth) {
   return (req as RequestWithAuth).auth!;
 }
 
-
-/** Branch scope check: area managers may only touch branches under their areas (demo: org-wide). */
-function assertBranchScope(_req: RequestWithAuth, _branchOrgId: string): void {
-  // In production this resolves the caller's area/zone from users_profile and
-  // rejects cross-area writes. Demo mode is org-wide.
-}
 
 /* ── Zones ────────────────────────────────────────────────────────────────── */
 

@@ -16,7 +16,6 @@ import type { NextFunction, Request, Response } from 'express';
 import {
   appendAudit,
   sessionTimeoutDecision,
-  securityStore,
   type AuditActor,
 } from '../lib/security-store.js';
 import { isDemoMode } from '../lib/demo.js';

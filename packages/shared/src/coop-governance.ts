@@ -331,7 +331,7 @@ export function electionWinner(candidates: { name: string; votes: number }[]): {
 }
 
 /** A resolution passes when inFavor > against (ordinary) or 2/3 majority (special). */
-export function resolutionPasses(kind: ResolutionKind, inFavor: number, against: number, abstain: number): boolean {
+export function resolutionPasses(kind: ResolutionKind, inFavor: number, against: number, _abstain: number): boolean {
   if (kind === 'special') {
     const valid = inFavor + against;
     return valid > 0 && inFavor / valid >= 2 / 3;

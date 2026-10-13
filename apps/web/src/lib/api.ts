@@ -1,6 +1,5 @@
 import { useAuthStore } from '@/stores/auth';
-
-const API_URL = import.meta.env.VITE_API_URL ?? '/api/v1';
+import { apiBaseUrl } from '@/lib/apiConfig';
 
 export class ApiError extends Error {
   constructor(
@@ -11,21 +10,39 @@ export class ApiError extends Error {
   ) {
     super(message);
   }
+
+  /** True when the request never reached the API (DNS, CORS, offline, wrong URL). */
+  get isNetwork(): boolean {
+    return this.status === 0;
+  }
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = useAuthStore.getState().accessToken;
+  const base = apiBaseUrl();
 
-  const res = await fetch(`${API_URL}${path}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      // CSRF proof for the API's Origin-checked guard (req 3).
-      'X-Requested-With': 'XMLHttpRequest',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...init?.headers,
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${base}${path}`, {
+      ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        // CSRF proof for the API's Origin-checked guard (req 3).
+        'X-Requested-With': 'XMLHttpRequest',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...init?.headers,
+      },
+    });
+  } catch (err) {
+    // The request never produced a response: unreachable host, CORS rejection
+    // or offline client. Differentiate it from a 4xx/5xx so the UI can say
+    // "cannot reach the API" instead of "incorrect email or password".
+    throw new ApiError(
+      0,
+      'NETWORK',
+      `API সংযোগ ব্যর্থ / Cannot reach the API at ${base} (${err instanceof Error ? err.message : String(err)})`,
+    );
+  }
 
   if (!res.ok) {
     // Stale/expired session against a live API (or a timed-out demo session):
@@ -68,13 +85,23 @@ export const api = {
  * (exports, document HTML) are fetched and handed over as Blobs instead. */
 async function fetchAuthedFile(path: string): Promise<Response> {
   const token = useAuthStore.getState().accessToken;
-  const res = await fetch(`${API_URL}${path}`, {
-    headers: {
-      // CSRF proof for the API's Origin-checked guard.
-      'X-Requested-With': 'XMLHttpRequest',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-  });
+  const base = apiBaseUrl();
+  let res: Response;
+  try {
+    res = await fetch(`${base}${path}`, {
+      headers: {
+        // CSRF proof for the API's Origin-checked guard.
+        'X-Requested-With': 'XMLHttpRequest',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+  } catch (err) {
+    throw new ApiError(
+      0,
+      'NETWORK',
+      `API সংযোগ ব্যর্থ / Cannot reach the API at ${base} (${err instanceof Error ? err.message : String(err)})`,
+    );
+  }
   if (!res.ok) {
     let message = res.statusText;
     try {

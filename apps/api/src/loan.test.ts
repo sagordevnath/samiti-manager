@@ -9,17 +9,13 @@ process.env['SUPABASE_JWT_SECRET'] = 'test-jwt-secret';
 
 let createAppRef: typeof import('./app.js').createApp;
 let resetLoanDemoStoreRef: typeof import('./lib/loan-store.js').resetLoanDemoStore;
-let loanDemoStoreRef: typeof import('./lib/loan-store.js').loanDemoStore;
 
 const DEMO_TOKEN = 'demo-token';
 
 beforeEach(async () => {
   vi.resetModules();
   ({ createApp: createAppRef } = await import('./app.js'));
-  ({
-    loanDemoStore: loanDemoStoreRef,
-    resetLoanDemoStore: resetLoanDemoStoreRef,
-  } = await import('./lib/loan-store.js'));
+  ({ resetLoanDemoStore: resetLoanDemoStoreRef } = await import('./lib/loan-store.js'));
   resetLoanDemoStoreRef(); // fresh dataset per test
 });
 

@@ -43,7 +43,7 @@ import {
   type SavedReportBody,
   type StandardReportKind,
 } from '@samity/shared';
-import { buildSnapshot, misStore, ProgramsError, standardReport } from './mis-store.js';
+import { buildSnapshot, ProgramsError, standardReport } from './mis-store.js';
 
 export { ProgramsError };
 
@@ -52,8 +52,6 @@ function err(status: number, code: string, message: string): never {
 }
 
 const ORG = '00000000-0000-4000-8000-0000000000aa';
-const BRANCH_DHAKA = '00000000-0000-4000-8000-0000000000b1';
-const BRANCH_MYM = '00000000-0000-4000-8000-0000000000b2';
 
 export interface MisOpsData {
   orgId: string;

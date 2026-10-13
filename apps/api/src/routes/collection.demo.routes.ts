@@ -21,9 +21,7 @@ import {
   loanWriteOffCreateSchema,
   rescheduleDecisionSchema,
   writeOffDecisionSchema,
-  type CollectionReceipt,
 } from '@samity/shared';
-import { isDemoMode } from '../lib/demo.js';
 import {
   buildDemoSheet,
   closeDemoLoan,
@@ -44,7 +42,6 @@ import {
   postDemoCollectionEntry,
   requestDemoReschedule,
   requestDemoWriteOff,
-  resetCollectionDemoStore,
   reviewDemoFraudFlag,
   reverseDemoEntry,
   submitDemoHandover,

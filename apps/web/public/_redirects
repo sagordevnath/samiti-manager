@@ -1,0 +1,6 @@
+# SPA fallback — every unknown path serves the app shell so client-side routes
+# (/members, /loans/123, /verify/CODE …) work on a hard refresh or deep link.
+# This file ships inside the published directory, which is where Netlify and
+# Cloudflare Pages look for it. Netlify also reads the same rule from
+# netlify.toml at the repository root.
+/*    /index.html   200

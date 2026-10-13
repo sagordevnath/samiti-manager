@@ -21,8 +21,6 @@ import {
   buildDemoPassbook,
   demoDividendPreview,
   demoMemberName,
-  ledgerBalance,
-  paidSharesFor,
   postDemoTx,
   runDemoReconciliation,
   savingsDemoStore,

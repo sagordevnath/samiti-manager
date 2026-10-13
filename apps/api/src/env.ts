@@ -42,6 +42,14 @@ const envSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().default('service-role-placeholder'),
   SUPABASE_JWT_SECRET: z.string().default('placeholder-jwt-secret-not-for-production'),
 
+  /**
+   * Which store the API serves (see lib/demo.ts).
+   *   auto  — demo until real Supabase credentials exist (default)
+   *   force — always the in-memory demo store (public demo, no DB needed)
+   *   off   — live only; refuses to boot without real credentials
+   */
+  DEMO_MODE: z.enum(['auto', 'force', 'off']).default('auto'),
+
   /** Master key for member-identity field encryption (base64/passphrase). */
   MEMBER_ENC_KEY: z.string().min(8).default('dev-only-member-encryption-master-key'),
   SAVINGS_INTEREST_FREQUENCY: z.enum(['monthly', 'yearly']).default('monthly'),

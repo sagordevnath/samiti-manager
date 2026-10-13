@@ -28,13 +28,37 @@ const SERVICE_KEY_PLACEHOLDERS = new Set([
  */
 const MIN_SERVICE_KEY_LENGTH = 100;
 
-export function isDemoMode(): boolean {
+/**
+ * True when the Supabase env values are still template text, so a real project
+ * cannot be reached. Drives the automatic demo fallback ('auto' mode).
+ */
+export function supabaseLooksUnconfigured(): boolean {
   return (
-    env.NODE_ENV === 'test' ||
     env.SUPABASE_URL.includes('placeholder') ||
     SERVICE_KEY_PLACEHOLDERS.has(env.SUPABASE_SERVICE_ROLE_KEY) ||
     env.SUPABASE_SERVICE_ROLE_KEY.trim().length < MIN_SERVICE_KEY_LENGTH
   );
+}
+
+/**
+ * Which store the API serves.
+ *
+ *   DEMO_MODE=auto  (default) — demo when Supabase is unconfigured (so a
+ *                    fresh checkout and a demo deploy both work with no
+ *                    database), live as soon as real credentials are present.
+ *   DEMO_MODE=force           — always the in-memory store. Use this to publish
+ *                    a public demo with sample data and no secrets at all.
+ *   DEMO_MODE=off             — never the in-memory store. A production deploy
+ *                    that must not serve fake data; the server refuses to boot
+ *                    when the credentials are still placeholders (server.ts).
+ *
+ * Tests always use the in-memory store — no test may touch a real project.
+ */
+export function isDemoMode(): boolean {
+  if (env.NODE_ENV === 'test') return true;
+  if (env.DEMO_MODE === 'force') return true;
+  if (env.DEMO_MODE === 'off') return false;
+  return supabaseLooksUnconfigured();
 }
 
 /**

@@ -358,7 +358,6 @@ export function ProgramsPage() {
   });
 
   const projectOf = (id: string) => projects.data?.items.find((p) => p.id === id);
-  const benOf = (id: string) => beneficiaries.data?.items.find((b) => b.id === id);
   const activeProject = projects.data?.items.find((p) => p.status === 'active') ?? projects.data?.items[0];
 
   return (

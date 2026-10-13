@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { api, ApiError } from '@/lib/api';
+import { apiBaseUrl } from '@/lib/apiConfig';
 import { useAuthStore } from '@/stores/auth';
 
 /** Client-side schema mirrors shared loginSchema (kept form-field friendly). */
@@ -56,6 +57,14 @@ export function LoginPage() {
       setSession({ accessToken: res.accessToken, refreshToken: res.refreshToken, user: res.user });
       navigate('/', { replace: true });
     } catch (err) {
+      // A transport failure is a deployment problem, not a bad password — say
+      // so, with the URL that was tried, instead of "login failed".
+      if (err instanceof ApiError && err.isNetwork) {
+        setServerError(
+          `${err.message}\n(${t('auth.apiUnreachable')}: ${apiBaseUrl()})`,
+        );
+        return;
+      }
       setServerError(err instanceof ApiError ? err.message : t('auth.loginFailed'));
     }
   };
@@ -83,7 +92,7 @@ export function LoginPage() {
             </div>
 
             {serverError && (
-              <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">
+              <p role="alert" className="whitespace-pre-line rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">
                 {serverError}
               </p>
             )}

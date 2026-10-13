@@ -189,7 +189,7 @@ export function upsertDocTemplate(
   viewer: { name: string },
 ): { template: DocTemplate; version: DocTemplateVersion } {
   const store = docStore();
-  const { known, unknown } = docVariablesUsed(body.body);
+  const { unknown } = docVariablesUsed(body.body);
   if (unknown.length > 0) {
     err(422, 'VALIDATION_ERROR', `অজানা ভেরিয়েবল / Unknown variables: ${unknown.join(', ')}`);
   }

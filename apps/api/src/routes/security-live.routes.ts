@@ -25,7 +25,6 @@ import {
   sessionPolicySchema,
   totpConfigSchema,
   type AuditAction,
-  type AuditFilter,
   type DeviceRecord,
   type IpAllowlist,
   type ProtectedField,

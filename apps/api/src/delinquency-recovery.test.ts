@@ -20,8 +20,6 @@ let loanDemoStoreRef: typeof import('./lib/loan-store.js').loanDemoStore;
 let savingsDemoStoreRef: typeof import('./lib/savings-store.js').savingsDemoStore;
 
 const DEMO_TOKEN = 'demo-token';
-const BRANCH_DHAKA = '00000000-0000-4000-8000-0000000000b1';
-
 beforeEach(async () => {
   vi.resetModules();
   ({ createApp: createAppRef } = await import('./app.js'));

@@ -26,7 +26,6 @@ import {
   advanceAdmission,
   bulkImportMembers,
   changeMemberStatus,
-  checkDuplicates,
   completeTransfer,
   createAdmission,
   decideTransfer,

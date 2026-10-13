@@ -480,7 +480,6 @@ export function verifyTemplate(id: string, verifiedBy: string): ReportTemplate {
   const t = getTemplate(id);
   t.needsVerification = false;
   t.updatedAt = new Date().toISOString();
-  t.rows = t.rows; // verifiedBy is recorded in the audit trail below
   misStore().audit.push({ id: randomUUID(), kind: `template_verified:${t.id}`, params: { verifiedBy }, requestedBy: verifiedBy, createdAt: new Date().toISOString() });
   return t;
 }
@@ -499,7 +498,6 @@ export function generateReturn(templateId: string, periodStart: string, periodEn
   if (store.returns.some((r) => r.templateId === templateId && r.periodStart === periodStart && r.periodEnd === periodEnd)) {
     err(409, 'CONFLICT', 'এই প্রান্তিকের রিটার্ন আছে / Return already generated');
   }
-  const asOf = new Date().toISOString().slice(0, 10);
   const generated = generateRegulatoryReturn(t, probeValues(), periodStart, periodEnd);
   const row: MisReturnRow = { id: randomUUID(), templateId, periodStart, periodEnd, generated, generatedBy, generatedAt: new Date().toISOString(), submittedAt: null };
   store.returns.push(row);

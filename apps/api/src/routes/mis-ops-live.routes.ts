@@ -316,7 +316,6 @@ misOpsLiveRouter.post(
   asyncHandler(async (req: RequestWithAuth, res) => {
     const body = req.body as SavedReportBody;
     const viewer = viewerOf(req);
-    const now = new Date().toISOString();
     const { data, error } = await supabaseAdmin
       .from('saved_reports')
       .insert({

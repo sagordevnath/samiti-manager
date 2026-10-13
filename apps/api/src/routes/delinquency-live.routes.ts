@@ -21,11 +21,8 @@ import {
   followUpCreateSchema,
   rootCauseTagSchema,
   savingsAdjustmentSchema,
-  waiverCreateSchema,
-  waiverDecisionSchema,
   legalNoticeRequestSchema,
   writeOffProposalSchema,
-  writeOffRecoverySchema,
   provisionProposalSchema,
   type ClassifiedLoan,
   type DelinquencySettings,
@@ -786,7 +783,7 @@ delinquencyLiveRouter.post(
       row.outstanding += Number(l.outstanding);
       byClass.set(l.assetClass, row);
     }
-    const provisionTotal = [...byClass.entries()].reduce((s, [cls, row]) => s + (row.outstanding * row.pct) / 100, 0);
+    const provisionTotal = [...byClass.entries()].reduce((s, [, row]) => s + (row.outstanding * row.pct) / 100, 0);
     const { data: run, error } = await supabaseAdmin
       .from('delinquency_runs')
       .insert({

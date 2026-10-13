@@ -341,7 +341,7 @@ function deliveryToWire(r: Record<string, unknown>): DeliveryRecord {
 }
 
 /** The guarded send pipeline, shared by /send and the bulk job worker. */
-export async function sendMessageLive(orgId: string, b: CommSendBody, viewer: { userId: string; name: string; role: string }): Promise<DeliveryRecord> {
+export async function sendMessageLive(orgId: string, b: CommSendBody, _viewer: { userId: string; name: string; role: string }): Promise<DeliveryRecord> {
   const rules = await loadRules(orgId);
   const now = new Date();
   const nowIso = now.toISOString();

@@ -21,7 +21,7 @@ import type {
   StaffMovement,
   Vacancy,
 } from '@samity/shared';
-import { LEAVE_LABELS_BN, leaveBalance, type LeaveType } from '@samity/shared';
+import { LEAVE_LABELS_BN, type LeaveType } from '@samity/shared';
 import {
   DESIGNATIONS,
   DESIGNATION_LABELS_BN,
@@ -97,8 +97,6 @@ const DESIG_BN: Record<string, string> = {
 
 const FIELD_OFFICER = '00000000-0000-4000-8000-0000000000f1';
 const ACCOUNTANT = '00000000-0000-4000-8000-0000000000f2';
-const DHAKA = '00000000-0000-4000-8000-0000000000b1';
-const VACANCY = '00000000-0000-4000-8000-0000000000a1';
 const TODAY = () => new Date().toISOString().slice(0, 10);
 
 type BranchLite = { id: string; name: string; name_bn: string | null; code: string };

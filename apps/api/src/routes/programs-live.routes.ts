@@ -79,12 +79,6 @@ function pgError(err: unknown): never {
   throw (err as Error) ?? new Error('unknown');
 }
 
-/** Sn: PostgREST embedded relations can type as arrays — normalize once. */
-function one<T>(row: unknown): T | null {
-  if (row === null || row === undefined) return null;
-  return (Array.isArray(row) ? row[0] ?? null : row) as T | null;
-}
-
 /** Case-worker clearance mirrors 0046's RLS: workers see all, assignee their own. */
 function viewerOf(req: RequestWithAuth): Viewer {
   return {

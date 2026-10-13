@@ -24,3 +24,7 @@ coverage/
 logs/
 *.log
 npm-debug.log*
+
+# local scratch / agent tooling — the status-page ingest token is written here
+# by status/ (docs/deploy.md §9) and must never be committed
+.freebuff/status-ingest-token.txt

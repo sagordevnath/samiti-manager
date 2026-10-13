@@ -10,7 +10,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Banknote, ClipboardCheck, FileText, ShieldAlert } from 'lucide-react';
-import type { CaseStatus, CaseType, FundingKind, ProgramSector } from '@samity/shared';
+import type { CaseStatus, CaseType, FundingKind } from '@samity/shared';
 import { CASE_SEVERITY_LABELS_BN, CASE_STATUS_LABELS_BN, CASE_TYPE_LABELS_BN, FUNDING_KIND_LABELS_BN } from '@samity/shared';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';

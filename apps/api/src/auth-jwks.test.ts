@@ -135,7 +135,7 @@ describe('algorithm confusion is rejected before any key lookup', () => {
     // Header says HS256 but the signature is ES256: the pinned asymmetric list
     // must refuse it before the key object is even constructed.
     const token = await mintEs256({ sub: crypto.randomUUID(), role: 'super_admin' });
-    const [h, p, s] = token.split('.');
+    const [, p, s] = token.split('.');
     const lyingHeader = Buffer.from(JSON.stringify({ alg: 'HS256', kid: 'kid-1' })).toString('base64url');
     const res = await request(createAppRef()).get('/api/v1/auth/me').set('Authorization', `Bearer ${lyingHeader}.${p}.${s}`);
     expect(res.status).toBe(401);

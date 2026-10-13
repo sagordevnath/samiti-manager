@@ -16,7 +16,6 @@ process.env['SUPABASE_JWT_SECRET'] = 'test-jwt-secret';
 
 let createAppRef: typeof import('./app.js').createApp;
 
-const DHAKA = '00000000-0000-4000-8000-0000000000b1';
 const POLICY_ID = '00000000-0000-4000-8000-00000000c001';
 const ENROLLMENT_ID = '00000000-0000-4000-8000-00000000e001';
 const MEMBER_A = '00000000-0000-4000-8000-0000000001a1';

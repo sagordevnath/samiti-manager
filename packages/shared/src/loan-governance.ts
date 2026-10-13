@@ -77,7 +77,7 @@ export function resolveApproval(
   if (!row) {
     return { rowId: null, approverRoles: [], canApproveSolo: [], needsEscalation: [], matchedBand: null };
   }
-  const canApproveSolo = row.approverRoles.filter((role) => {
+  const canApproveSolo = row.approverRoles.filter((_role) => {
     const solo = row.soloApprovalLimit;
     return solo === null || amount <= Number(solo);
   });

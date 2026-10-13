@@ -32,19 +32,12 @@ import {
   type AgmUpsertBody,
   type DividendDistribution,
   type DividendDistributionStatus,
-  type ExitSettlementLine,
-  type ExitStatus,
   type MemberExitBody,
   type MemberExitSettlement,
   type ShareHolding,
 } from '@samity/shared';
-import { WorkDemoError } from './work-store.js';
 
 const ORG_ID = '00000000-0000-4000-8000-0000000000aa';
-const BRANCH_DHAKA = '00000000-0000-4000-8000-0000000000b1';
-const MEMBER_A = '00000000-0000-4000-8000-0000000001a1';
-const MEMBER_B = '00000000-0000-4000-8000-0000000001a2';
-const MEMBER_C = '00000000-0000-4000-8000-0000000001a3';
 
 export class CoopGovernanceError extends Error {
   constructor(
@@ -74,7 +67,6 @@ export interface CoopGovernanceDemoData {
 const globalRef = globalThis as unknown as { __coopGovDemoData?: CoopGovernanceDemoData };
 
 function seedStore(): CoopGovernanceDemoData {
-  const now = new Date().toISOString();
   return {
     orgId: ORG_ID,
     distributions: new Map(),

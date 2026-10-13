@@ -566,13 +566,6 @@ loansRouter.post(
         .eq('action', 'done');
       const doneStages = new Set((doneSteps ?? []).map((s) => s.stage));
       const doneOfficer = officerStages.filter((s) => doneStages.has(s));
-      const { data: policy } = await supabaseAdmin
-        .from('loan_policies')
-        .select('bm_approval_limit_bdt')
-        .eq('org_id', app.org_id)
-        .maybeSingle();
-      const bmLimit = String(policy?.bm_approval_limit_bdt ?? '100000.00');
-      const needsArea = Number(app.requested_amount) > Number(bmLimit);
       let next: string | null = null;
       if (doneOfficer.length === 1) next = 'officer_review';
       if (doneOfficer.length === officerStages.length) next = 'bm_review';

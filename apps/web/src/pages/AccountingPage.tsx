@@ -77,7 +77,6 @@ const BRANCHES = [
   { id: '00000000-0000-4000-8000-0000000000b1', name: 'Dhaka Branch' },
   { id: '00000000-0000-4000-8000-0000000000b2', name: 'Mymensingh Sadar' },
 ];
-const BRANCH_NAME: Record<string, string> = Object.fromEntries(BRANCHES.map((b) => [b.id, b.name]));
 const TODAY = () => new Date().toISOString().slice(0, 10);
 
 function Th({ children, right }: { children: React.ReactNode; right?: boolean }) {

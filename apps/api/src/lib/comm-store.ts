@@ -22,7 +22,6 @@ import {
   type CommRules,
   type DeliveryRecord,
   type DeliveryStatus,
-  type MessageOut,
   type MessageProvider,
   type MessageTemplate,
   type MessageTemplateBody,
@@ -246,7 +245,7 @@ export function listTemplates(): MessageTemplate[] {
 
 export function upsertTemplate(body: MessageTemplateBody, viewer: { name: string }): MessageTemplate {
   const store = commStore();
-  const { known, unknown } = templateVariablesUsed(body.body);
+  const { unknown } = templateVariablesUsed(body.body);
   if (unknown.length > 0) {
     err(422, 'VALIDATION_ERROR', `অজানা ভেরিয়েবল / Unknown variables: ${unknown.join(', ')}`);
   }
@@ -425,7 +424,7 @@ function localHhmm(now = new Date()): string {
 }
 
 /** Send one message through the full guard pipeline. Returns the delivery row. */
-export async function sendMessage(b: SendBody, viewer: { userId: string; name: string; role: string }): Promise<DeliveryRecord> {
+export async function sendMessage(b: SendBody, _viewer: { userId: string; name: string; role: string }): Promise<DeliveryRecord> {
   const store = commStore();
   const rules = store.rules;
   const now = new Date();
@@ -603,7 +602,7 @@ export function markNotificationRead(id: string, viewer: { userId: string; role:
 }
 
 /** Broadcast an in-app announcement to every seeded staff user (or one target). */
-export function broadcast(body: { title: string; message: string; userId?: string }, viewer: { name: string }): NotificationRecord[] {
+export function broadcast(body: { title: string; message: string; userId?: string }, _viewer: { name: string }): NotificationRecord[] {
   const store = commStore();
   const targets = body.userId
     ? [body.userId]

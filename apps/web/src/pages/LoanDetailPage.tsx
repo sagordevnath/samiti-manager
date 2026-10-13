@@ -76,11 +76,6 @@ export function LoanDetailPage() {
   const [gNid, setGNid] = useState('');
   const [rejectReason, setRejectReason] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [utCat, setUtCat] = useState('');
-  const [utDesc, setUtDesc] = useState('');
-  const [utAmount, setUtAmount] = useState('');
-  const [utItems, setUtItems] = useState<Array<{ category: string; description: string; amount: string }>>([]);
-  const [vNote, setVNote] = useState('');
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['loan-application', id] });

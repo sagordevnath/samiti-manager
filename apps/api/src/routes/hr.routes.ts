@@ -1071,7 +1071,7 @@ hrRouter.put(
 );
 
 /** Compute a month's payroll lines from structures + staff. */
-async function buildPayrollLines(orgId: string, period: string) {
+async function buildPayrollLines(orgId: string, _period: string) {
   const [staffRes, structuresRes] = await Promise.all([
     supabaseAdmin.from('hr_staff').select('*').eq('org_id', orgId).is('deleted_at', null).in('status', ['probation', 'confirmed']),
     supabaseAdmin.from('salary_structures').select('*').eq('org_id', orgId).is('deleted_at', null),

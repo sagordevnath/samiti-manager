@@ -1,155 +1,156 @@
 # Samity Manager
 
-Role-based management system for Bangladeshi cooperative societies and NGO-MFIs (BRAC / Grameen / RRF / JCF style).
+Role-based management system for Bangladeshi cooperative societies (সমিতি) and
+NGO-MFIs — savings, shares, loans, collection, accounting, HR, MIS and
+compliance, with a Bangla-first interface.
 
-**Stack:** Vite + React + TypeScript · Node.js + Express + TypeScript · Supabase (Postgres, Auth, Storage, RLS) · free tiers only.
+**Stack:** Vite + React + TypeScript · Node.js + Express + TypeScript ·
+Supabase (Postgres, Auth, RLS) · free tiers only.
 
-## Features (foundation)
+| | |
+| --- | --- |
+| API routers | 44 (`apps/api/src/routes/`) |
+| Web pages | 49 (`apps/web/src/pages/`) |
+| DB migrations | 58 (`supabase/migrations/`) |
+| Runtime | Node.js **22+** (`@supabase/supabase-js` requires it) |
+| Tests | 770 across api / web / shared |
 
-- Monorepo: `apps/web`, `apps/api`, `packages/shared`
-- Bangla-default UI (English toggle), Noto Sans Bengali, Bangla-digit toggle, mobile-first layout, PWA shell
-- Permission-driven sidebar (same permission model on web + API)
-- Express API: helmet, CORS, rate-limit, pino logs, Zod validation, central error handler, `/api/v1`, JWT middleware, `/health`
-- Supabase migrations, seed script, generated-style DB types, RLS policies
-- ESLint + Prettier + Vitest + GitHub Actions CI
+---
 
-## Folder tree
+## Quick start (5 minutes, no cloud account needed)
+
+```bash
+npm install
+npm run dev:local
+```
+
+- Web: <http://localhost:5173> (loads in Bangla)
+- API: <http://localhost:4000/api/v1/health>
+
+With no Supabase credentials configured, the API serves an **in-memory sample
+dataset** and the app opens straight into the dashboard — no login, no
+database. That is demo mode; see [docs/demo-data.md](docs/demo-data.md).
+
+### Run against a real database
+
+1. Create a free [Supabase](https://supabase.com) project.
+2. Copy `.env.example` → `.env` and fill in `SUPABASE_URL`,
+   `SUPABASE_SERVICE_ROLE_KEY` (**service_role**, not the anon key!) and
+   `SUPABASE_JWT_SECRET`.
+3. Apply migrations and seed the demo org:
+
+   ```bash
+   SUPABASE_DB='postgresql://…' npm run db:migrate
+   npm run db:seed
+   ```
+
+4. `npm run dev:local`, then sign in with `admin@samity.test / Samity@2026`.
+
+The API switches between demo and live data automatically (`DEMO_MODE=auto`);
+the boot log states which mode it chose.
+
+---
+
+## Deploying
+
+Two pieces: a **static client** and a **Docker API**.
+
+```bash
+docker build -t samity-api .
+docker run -d -p 4000:4000 \
+  -e NODE_ENV=production \
+  -e CORS_ORIGINS=https://YOUR-SITE.netlify.app \
+  -e DEMO_MODE=force \        # sample data, no database — omit for live
+  samity-api
+```
+
+For the client, `netlify.toml` is committed: import the repo into Netlify and
+set `VITE_API_URL=https://YOUR-API-HOST/api/v1`. **Without that variable the
+deployed site cannot reach any API and renders empty pages** — the app shows a
+diagnostic screen explaining exactly this, and
+**[docs/deploy.md](docs/deploy.md)** covers the full runbook, the env-var table
+and the troubleshooting matrix.
+
+---
+
+## Documentation
+
+| Document | Contents |
+| -------- | -------- |
+| [docs/deploy.md](docs/deploy.md) | Production deployment: Netlify + Docker + Supabase, verification commands, troubleshooting |
+| [docs/go-live.md](docs/go-live.md) | Release checklist and staff training plan |
+| [docs/demo-data.md](docs/demo-data.md) | Demo dataset reference and how to load it |
+| [docs/infisical.md](docs/infisical.md) | Optional secret management for teams using Infisical |
+| [docs/ui-crud-coverage.md](docs/ui-crud-coverage.md) | Map of every API endpoint against the screen that uses it |
+| [docs/backlog.md](docs/backlog.md) | Prioritised remaining work with review evidence |
+
+---
+
+## Repository layout
 
 ```
 samity-manager/
 ├── apps/
-│   ├── api/
+│   ├── api/                     # Express API
 │   │   ├── src/
-│   │   │   ├── middleware/        # auth (JWT), error, validate
-│   │   │   ├── lib/               # logger, supabase admin client, errors
-│   │   │   ├── routes/            # health, auth, members, nav
-│   │   │   ├── scripts/           # migrate, seed
-│   │   │   ├── app.ts             # express factory
-│   │   │   ├── env.ts             # zod-validated env
-│   │   │   └── server.ts          # entrypoint + graceful shutdown
-│   │   ├── package.json
-│   │   └── tsconfig*.json
-│   └── web/
-│       ├── public/
+│   │   │   ├── middleware/      # auth (JWT + JWKS), error, validate, security
+│   │   │   ├── lib/             # logger, supabase client, per-module stores
+│   │   │   ├── routes/          # 44 routers (demo + Supabase-backed per module)
+│   │   │   ├── app.ts           # express factory (mode-aware route mounting)
+│   │   │   ├── env.ts           # zod-validated env + origin allow-list
+│   │   │   └── server.ts        # entrypoint, boot banner, graceful shutdown
+│   │   └── Dockerfile → ../../Dockerfile (repo root, workspace build)
+│   └── web/                     # Vite SPA (PWA)
+│       ├── public/config.js     # runtime API URL — editable after deploy
 │       ├── src/
-│       │   ├── components/        # ui/ (shadcn-style), layout/, auth/
-│       │   ├── lib/               # api client, i18n, digits, permissions
-│       │   ├── locales/           # bn.json (default), en.json
-│   │   │   ├── pages/             # Login, Dashboard, Placeholder
-│       │   ├── stores/            # zustand: auth, ui
-│       │   └── test/
-│       ├── index.html
-│       ├── vite.config.ts         # PWA manifest + Tailwind v4
-│       └── package.json
-├── packages/
-│   └── shared/                    # zod schemas, types, roles, nav, formatters
+│       │   ├── components/      # ui/, layout/, auth/ (ProtectedRoute, ApiUnreachable)
+│       │   ├── lib/             # api client, apiConfig, apiMode, i18n, digits
+│       │   ├── locales/         # bn.json (default), en.json
+│       │   ├── pages/           # 49 screens
+│       │   └── stores/          # zustand: auth, ui
+│       └── netlify.toml → ../../netlify.toml (repo root)
+├── packages/shared/             # zod schemas, types, roles, nav, formatters
 ├── supabase/
-│   ├── migrations/                # 0001_core.sql, 0002_rls.sql
-│   └── database.types.ts
-├── .github/workflows/ci.yml
-├── .env.example
-├── package.json                   # npm workspaces
-└── tsconfig.base.json
+│   ├── migrations/              # 58 ordered migrations (tables + RLS)
+│   ├── bootstrap-fresh.sql      # single-file bootstrap for a new project
+│   └── demo-seed-full.sql       # demo dataset + demo login (never in prod)
+├── Dockerfile                   # production API image
+├── docker-compose.yml           # local / VPS API run
+├── netlify.toml                 # client build + SPA fallback + headers
+└── docs/
 ```
 
-## Prerequisites
-
-- Node.js ≥ 20
-- npm ≥ 10
-- A free-tier [Supabase](https://supabase.com) project
-- An [Infisical](https://app.infisical.com) account + the [Infisical CLI](https://infisical.com/docs/cli/overview)
-  (secrets are delivered centrally — there is no `.env` on disk)
-
-## Setup
-
-### 1. Install
-
-```bash
-npm install
-```
-
-### 2. Configure secrets (Infisical)
-
-Secrets are stored in Infisical and injected at start-up, not kept in a `.env` file. Full runbook:
-[`docs/infisical.md`](docs/infisical.md). Short version:
-
-```bash
-npm run secrets:login   # infisical login (-i on WSL 2 / Codespaces / remote SSH)
-npm run secrets:init    # writes .infisical.json (project ID only — no secrets, safe to commit)
-npm run dev             # infisical run --env=dev -- ...
-```
-
-### 3. Configure Supabase
-
-1. Create a project at supabase.com (free tier).
-2. Copy **Project URL**, **anon key**, **service_role key** from Project Settings → API into the Infisical project (Development environment).
-3. Copy **JWT Secret** (Project Settings → API → JWT Settings) into `SUPABASE_JWT_SECRET`.
-4. Copy the **connection string** (Project Settings → Database → Connection string → URI) into `SUPABASE_DB` (needed only for migrate/seed).
-
-See [`docs/infisical.md`](docs/infisical.md) for the full list of keys the app reads.
-
-### 4. Database
-
-```bash
-# apply migrations (creates tables + RLS)
-npm run secrets:run -- npm run db:migrate
-
-# seed demo org, branches, users, members
-npm run db:seed
-```
-
-Seed users (role is stored in `app_metadata` so the JWT carries it):
-
-| Email                 | Password      | Role           |
-| --------------------- | ------------- | -------------- |
-| admin@samity.test     | Admin1234!    | org_admin      |
-| manager@samity.test   | Manager1234!  | branch_manager |
-| officer@samity.test   | Officer1234!  | account_officer|
-
-### 5. Run
-
-```bash
-npm run dev          # infisical run --env=dev -- ... ; api on :4000, web on :5173
-```
-
-- Web: http://localhost:5173 (loads in Bangla)
-- API health: http://localhost:4000/api/v1/health
-
-### 6. Generate DB types (optional, after schema changes)
-
-```bash
-npm run db:types
-```
+---
 
 ## Scripts
 
-| Command             | Purpose                                                            |
-| ------------------- | ------------------------------------------------------------------ |
-| `npm run dev`       | API + web dev servers together, secrets from Infisical             |
-| `npm run dev:local` | Same, without Infisical (Zod defaults / demo mode)                 |
-| `npm run secrets:*` | `login`, `init`, `run`, `scan` helpers ([docs](docs/infisical.md)) |
-| `npm run build`     | Build all workspaces                                               |
-| `npm run typecheck` | tsc across workspaces                                              |
-| `npm run lint`      | ESLint across workspaces                                           |
-| `npm run test`      | Vitest across workspaces                                           |
-| `npm run format`    | Prettier write                                                     |
-| `npm run db:*`      | migrate / seed / generate types                                    |
+| Command | Purpose |
+| ------- | ------- |
+| `npm run dev:local` | API + web dev servers, Zod defaults (demo mode) |
+| `npm run dev` | Same, with secrets injected from Infisical |
+| `npm run build` | Build shared → api → web |
+| `npm run typecheck` | `tsc --noEmit` across workspaces |
+| `npm run lint` | ESLint across workspaces |
+| `npm run test` | Vitest across workspaces |
+| `npm run format` | Prettier write |
+| `npm run db:migrate` / `db:seed` / `db:types` | Database tasks (need `SUPABASE_DB`) |
+| `npm run secrets:*` | Infisical helpers ([docs](docs/infisical.md)) |
+
+---
 
 ## Conventions
 
-- Tables: `id uuid`, `org_id`, `branch_id` where relevant, `created_by`, `created_at`, `updated_at`, `deleted_at` (soft delete — queries must filter `deleted_at is null`).
-- Money: `numeric(14,2)`, transmitted as string, BDT only.
-- Dates: stored UTC (`timestamptz`), displayed in Asia/Dhaka (`formatDateUtc`/`formatDateTimeUtc` in shared).
-- Permissions: `<domain>:<action>` strings in `packages/shared/src/roles.ts` — used by both the sidebar and API routes.
-- API errors: `{ error: { code, message, details? } }` with stable machine codes.
+- **Money** `numeric(14,2)`, transmitted as strings, BDT only.
+- **Dates** stored UTC, rendered in Asia/Dhaka via the shared formatters.
+- **Permissions** are `<domain>:<action>` strings in
+  `packages/shared/src/roles.ts`, enforced by the sidebar and the API routes.
+- **API errors** are `{ error: { code, message, details? } }` with stable codes.
+- **Soft delete** — `deleted_at`; queries must filter `deleted_at is null`.
+- **Two data backends** — every module has a demo router (in-memory) and a live
+  router (Supabase). `apps/api/src/app.ts` mounts one per `DEMO_MODE`.
 
 ## CI
 
-GitHub Actions (`.github/workflows/ci.yml`): install → build shared → typecheck → lint → test → build on every push/PR to main.
-
-## Next steps
-
-- Wire Supabase Auth client in the browser (session refresh) and custom access-token hook to embed role claims.
-- Savings collection & loan repayment ledgers, repayment schedules.
-- Storage bucket policies for member photos/documents.
-- Reports module with Dhaka-timezone daily close.
+`.github/workflows/ci.yml` runs install → build shared → typecheck → lint →
+test → build on every push and PR to `main`. `.github/workflows/backup.yml`
+dumps the production database nightly (needs the `SUPABASE_DB` repo secret).

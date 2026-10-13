@@ -12,7 +12,6 @@ import {
   buildSupervisionSubmission,
   canTransitionFinding,
   escalateOpenTasks,
-  GPS_OUT_OF_RANGE_METERS,
   pickRandomSample,
   responseDeadlineFor,
   waitingDaysSince,
@@ -315,7 +314,7 @@ export function followUpFinding(store: WorkAuditDemoData, id: string, body: Find
   return f;
 }
 
-export function transitionFinding(store: WorkAuditDemoData, id: string, to: FindingStatus, actor: { name: string }): AuditFinding {
+export function transitionFinding(store: WorkAuditDemoData, id: string, to: FindingStatus, _actor: { name: string }): AuditFinding {
   const f = getFinding(store, id);
   if (!canTransitionFinding(f.status, to)) err(409, 'CONFLICT', `অবৈধ অবস্থান্তর ${f.status} → ${to}`);
   const now = new Date().toISOString();

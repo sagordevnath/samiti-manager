@@ -54,6 +54,7 @@
     "emailInvalid": "Enter a valid email",
     "passwordRequired": "Password is required",
     "loginFailed": "Login failed. Check your credentials.",
+    "apiUnreachable": "Cannot reach the API server",
     "demoHint": "Demo: admin@samity.test / Samity@2026"
   },
   "dashboard": {

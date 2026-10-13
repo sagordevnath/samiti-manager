@@ -1,0 +1,41 @@
+# ── Local / VPS run of the API ───────────────────────────────────────────────
+#   cp .env.example .env      # then fill in the values
+#   docker compose up --build
+#
+# Environment variables are read from ./.env (never committed). Values under
+# `environment:` win over the file, so NODE_ENV is always production here.
+#
+# For a public sales demo with sample data and no database, set DEMO_MODE=force
+# and leave the Supabase values blank.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: samity-api:latest
+    container_name: samity-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      # The deployed web origin must be listed here or the browser's requests
+      # are rejected with a CORS error. Comma-separated, no trailing slash.
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      DEMO_MODE: ${DEMO_MODE:-auto}
+    ports:
+      - '${API_PORT:-4000}:4000'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:4000/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

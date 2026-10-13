@@ -55,7 +55,7 @@ function previewAllocation(row: CollectionSheetRow, pool: number) {
 export function CollectionSheetPage() {
   const fmt = useMoneyFormatter();
   const user = useAuthStore((s) => s.user);
-  const [branchId, setBranchId] = useState(BRANCH_DHAKA);
+  const [branchId] = useState(BRANCH_DHAKA);
   const [meetingDate, setMeetingDate] = useState(today);
   const [online, setOnline] = useState(typeof navigator === 'undefined' ? true : navigator.onLine);
   const [paidInputs, setPaidInputs] = useState<Record<string, { loan: string; savings: string; extra: string }>>({});

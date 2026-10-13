@@ -54,6 +54,7 @@
     "emailInvalid": "সঠিক ইমেইল দিন",
     "passwordRequired": "পাসওয়ার্ড দিন",
     "loginFailed": "লগইন ব্যর্থ হয়েছে। তথ্য যাচাই করুন।",
+    "apiUnreachable": "API সার্ভারে সংযোগ করা যাচ্ছে না",
     "demoHint": "ডেমো: admin@samity.test / Samity@2026"
   },
   "dashboard": {

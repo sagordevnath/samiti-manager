@@ -14,7 +14,6 @@ import {
   TEMPLATE_KINDS,
   type DeliveryStatus,
   type SendChannel,
-  type TemplateKind,
 } from '@samity/shared';
 import {
   broadcast,

@@ -427,7 +427,7 @@ export function nextWorkingDay(
   opts: { holidays: Holiday[]; closureDay: number | null; action: HolidayAction },
 ): { date: string; shifted: boolean; reason: string | null } {
   const reasons: string[] = [];
-  let current = new Date(`${date}T00:00:00Z`);
+  const current = new Date(`${date}T00:00:00Z`);
   const step = opts.action === 'shift_back' ? -1 : 1;
   for (let guard = 0; guard < 366; guard++) {
     const iso = isoDate(current);

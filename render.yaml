@@ -1,0 +1,59 @@
+# ── Render Blueprint: the public API ─────────────────────────────────────────
+# The static web client needs an API on a public HTTPS origin. This file turns
+# the repository's Dockerfile into exactly that, with no server to manage:
+#
+#   Render dashboard → New → Blueprint → pick this repository → Apply
+#
+# Then point the client at the service URL plus /api/v1 — either in /config.js
+# on the deployed site (no rebuild) or via VITE_API_URL. Full runbook:
+# docs/deploy.md §4.
+#
+# Free-plan notes: the instance sleeps after ~15 minutes idle, and the next
+# request waits while it boots (the web client retries once for precisely this).
+# .github/workflows/keep-alive.yml pings /api/v1/health every 10 minutes to keep
+# a demo warm, and turns red when the API is unreachable.
+services:
+  - type: web
+    name: samity-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    # Closest region to Bangladesh. This cannot be changed after creation, so if
+    # the free plan is unavailable here the service has to be recreated —
+    # oregon/ohio/virginia/frankfurt are the alternatives.
+    region: singapore
+    branch: main
+    # Deploy on every push to the branch (current form of autoDeploy: true).
+    autoDeployTrigger: commit
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Sample data in memory: no database needed, and no real member data can
+      # be exposed. Switch to `auto` (or `off`) only after adding the
+      # SUPABASE_* variables below.
+      - key: DEMO_MODE
+        value: force
+      # Browser origins allowed to call this API. Keep the deployed web origin
+      # here (comma-separated, no trailing slash), and update it if the site is
+      # renamed — a mismatch is a CORS error in the browser console.
+      - key: CORS_ORIGINS
+        value: https://samity-manager.netlify.app
+      # Generated once and stored by Render. Changing it later makes existing
+      # member identity fields (NID, birth registration) unreadable, so do not
+      # rotate it casually.
+      - key: MEMBER_ENC_KEY
+        generateValue: true
+      - key: LOG_LEVEL
+        value: info
+      # ── Live data (optional) ────────────────────────────────────────────────
+      # Uncomment these together with DEMO_MODE=auto (or `off`) to serve the
+      # real Supabase project. `sync: false` makes Render prompt for the value
+      # in the dashboard instead of reading it from this file — never commit
+      # real keys here.
+      # - key: SUPABASE_URL
+      #   sync: false
+      # - key: SUPABASE_SERVICE_ROLE_KEY
+      #   sync: false
+      # - key: SUPABASE_JWT_SECRET
+      #   sync: false

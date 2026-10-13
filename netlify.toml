@@ -1,0 +1,60 @@
+# ── Netlify configuration ────────────────────────────────────────────────────
+# Builds the web SPA from the npm workspace root. Deploy the repo as-is; the
+# API runs separately (Docker) — see docs/deploy.md.
+
+[build]
+  # Run from the repository root so npm workspaces resolve @samity/shared.
+  command = "npm run build:web"
+  publish = "apps/web/dist"
+
+[build.environment]
+  # Node 22+ is required across the monorepo (@supabase/supabase-js 2.116+
+  # throws at import on Node 20). Keep this in step with the Dockerfile.
+  NODE_VERSION = "22"
+
+# ── REQUIRED: point the deployed SPA at your API ─────────────────────────────
+# Set VITE_API_URL in Netlify → Site configuration → Environment variables, e.g.
+#   VITE_API_URL = https://samity-api.onrender.com/api/v1
+# Without it the bundle falls back to same-origin "/api/v1", every request hits
+# this static host and the site renders empty pages. No rebuild is needed to
+# change it later: edit /config.js in the published deploy (see below).
+# So that this cannot ship by accident, a PRODUCTION build without the variable
+# now fails with "production build without an API address". Set
+# SAMITY_ALLOW_UNCONFIGURED_API=1 instead when the address comes from /config.js
+# or a same-origin reverse proxy. Preview deploys are never blocked.
+
+# ── SPA fallback ─────────────────────────────────────────────────────────────
+# Deep links and hard refreshes on client-side routes (e.g. /loans/123) must
+# serve the app shell. Declared here and mirrored in apps/web/public/_redirects
+# so the built artifact also works on hosts that read that file.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# ── Headers ──────────────────────────────────────────────────────────────────
+# Never cache the app shell or the runtime config: both change per deploy and
+# a stale shell keeps pointing at the previous bundle.
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/config.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+    X-Content-Type-Options = "nosniff"
+
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "SAMEORIGIN"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "geolocation=(self), microphone=(), camera=(self)"

@@ -1,0 +1,34 @@
+# Keep the build context small and make it impossible to bake a secret in.
+node_modules
+**/node_modules
+dist
+**/dist
+build
+**/build
+*.tsbuildinfo
+coverage
+
+# Secrets — never in the image.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Version control / editors / tooling scratch.
+.git
+.gitignore
+.github
+.kilo
+.freebuff
+.idea
+.vscode
+
+# Not needed to build or run the API.
+apps/web
+docs
+supabase
+backups
+logs
+*.log
+README.md

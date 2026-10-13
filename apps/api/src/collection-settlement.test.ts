@@ -16,7 +16,6 @@ let createAppRef: typeof import('./app.js').createApp;
 let resetLoanDemoStoreRef: typeof import('./lib/loan-store.js').resetLoanDemoStore;
 let resetCollectionDemoStoreRef: typeof import('./lib/collection-store.js').resetCollectionDemoStore;
 let resetSavingsDemoStoreRef: typeof import('./lib/savings-store.js').resetSavingsDemoStore;
-let collectionDemoStoreRef: typeof import('./lib/collection-store.js').collectionDemoStore;
 
 const DEMO_TOKEN = 'demo-token';
 const MEMBER_A = '00000000-0000-4000-8000-0000000001a1';
@@ -32,7 +31,6 @@ beforeEach(async () => {
   const savings = await import('./lib/savings-store.js');
   resetLoanDemoStoreRef = loan.resetLoanDemoStore;
   resetCollectionDemoStoreRef = coll.resetCollectionDemoStore;
-  collectionDemoStoreRef = coll.collectionDemoStore;
   resetSavingsDemoStoreRef = savings.resetSavingsDemoStore;
   resetLoanDemoStoreRef();
   resetCollectionDemoStoreRef();

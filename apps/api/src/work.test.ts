@@ -15,7 +15,6 @@ process.env['SUPABASE_JWT_SECRET'] = 'test-jwt-secret';
 
 let createAppRef: typeof import('./app.js').createApp;
 
-const ADMIN = '00000000-0000-4000-8000-0000000000f3'; // seeded BM id used as actor via demo token
 const F1 = '00000000-0000-4000-8000-0000000000f1';
 const F2 = '00000000-0000-4000-8000-0000000000f2';
 const BRANCH_B1 = '00000000-0000-4000-8000-0000000000b1';

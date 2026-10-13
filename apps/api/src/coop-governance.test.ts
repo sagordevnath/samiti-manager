@@ -92,7 +92,7 @@ describe('Dividend & surplus distribution (req 5)', () => {
   });
 
   it('walks compute → AGM approve → post → pay and blocks invalid transitions', async () => {
-    const created = await post('/api/v1/coop/dividend/compute', { fiscalYear: '2025-26', surplus: '100000', holders: HOLDERS });
+    await post('/api/v1/coop/dividend/compute', { fiscalYear: '2025-26', surplus: '100000', holders: HOLDERS });
     const fy = '2025-26';
 
     // Cannot post before AGM approval.
@@ -355,7 +355,6 @@ describe('Governance reports (req 8)', () => {
 
     // Premium vs payout rows exist per year with a zero payout so far.
     const rows = reports.body.premiumVsPayout as { period: string; premiums: string; payouts: string; ratioPct: number }[];
-    const year = String(new Date().getFullYear());
     expect(rows.length).toBeGreaterThan(0);
     expect(rows[0]!.payouts).toBe('0.00');
     expect(rows[0]!.ratioPct).toBe(0);

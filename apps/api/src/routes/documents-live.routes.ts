@@ -31,7 +31,7 @@ import {
   type ProtectedField,
 } from '@samity/shared';
 import { canUnmaskField, maskValue } from '@samity/shared';
-import { BadRequest, Conflict, Forbidden, NotFound } from '../lib/errors.js';
+import { BadRequest, Forbidden, NotFound } from '../lib/errors.js';
 import { requireAuth, requirePermission, type RequestWithAuth } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/error.js';
 import { validate } from '../middleware/validate.js';

@@ -271,7 +271,6 @@ privacyLiveRouter.post(
   '/corrections/:id/apply',
   requirePermission('member:approve'),
   asyncHandler(async (req: RequestWithAuth, res) => {
-    const viewer = viewerOf(req);
     const orgId = orgOf(req);
     const { data, error } = await supabaseAdmin.from('member_corrections').select('*').eq('id', req.params['id'] as string).eq('org_id', orgId).maybeSingle();
     if (error) throw error;

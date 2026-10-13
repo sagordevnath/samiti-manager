@@ -11,7 +11,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bell, Send, SlidersHorizontal, FileSignature } from 'lucide-react';
-import type { CommRules, DeliveryRecord, DeliveryStatus, MessageTemplate, NotificationRecord, SendChannel, TemplateKind, TemplateVariable } from '@samity/shared';
+import type { CommRules, DeliveryRecord, DeliveryStatus, MessageTemplate, NotificationRecord, SendChannel, TemplateKind } from '@samity/shared';
 import {
   DELIVERY_STATUS_LABELS_BN,
   SEND_CHANNELS,

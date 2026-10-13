@@ -8,7 +8,6 @@
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { BadgeCheck, ShieldAlert, ShieldQuestion } from 'lucide-react';
-import { api } from '@/lib/api';
 
 interface PublicVerify {
   kind: string;

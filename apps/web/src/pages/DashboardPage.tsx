@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { api } from '@/lib/api';
+import { apiMode } from '@/lib/apiMode';
 import { useAuthStore } from '@/stores/auth';
 import { useMoneyFormatter } from '@/lib/digits';
 import { ROLE_LABELS, type Role } from '@samity/shared';
@@ -94,23 +95,26 @@ export function DashboardPage() {
     queryKey: ['dashboard-summary'],
     queryFn: async () => {
       try {
-        return await api.get<Summary>('/dashboard/summary');
+        // /dashboard/summary only exists on the Supabase-backed router, so
+        // asking for it in demo mode would log a harmless but noisy 404.
+        if ((await apiMode()) === 'live') return await api.get<Summary>('/dashboard/summary');
       } catch {
-        const [members, savings, loans, branches] = await Promise.all([
-          api.get<{ total: number }>('/members?pageSize=1').catch(() => null),
-          api.get<{ items: Array<{ balance?: string | number }> }>('/savings/accounts').catch(() => null),
-          api.get<{ items: Array<{ status?: string }> }>('/loans/applications').catch(() => null),
-          api.get<{ items: unknown[] }>('/org/branches').catch(() => null),
-        ]);
-        const totalSavings = (savings?.items ?? []).reduce((t, a) => t + Number(a.balance ?? 0), 0);
-        const activeLoans = (loans?.items ?? []).filter((l) => ['approved', 'disbursed', 'am_review'].includes(l.status ?? '')).length;
-        return {
-          totalMembers: members?.total ?? 0,
-          totalSavings: totalSavings.toFixed(2),
-          activeLoans,
-          branches: branches?.items?.length ?? 0,
-        };
+        /* fall through to the list-endpoint counts */
       }
+      const [members, savings, loans, branches] = await Promise.all([
+        api.get<{ total: number }>('/members?pageSize=1').catch(() => null),
+        api.get<{ items: Array<{ balance?: string | number }> }>('/savings/accounts').catch(() => null),
+        api.get<{ items: Array<{ status?: string }> }>('/loans/applications').catch(() => null),
+        api.get<{ items: unknown[] }>('/org/branches').catch(() => null),
+      ]);
+      const totalSavings = (savings?.items ?? []).reduce((t, a) => t + Number(a.balance ?? 0), 0);
+      const activeLoans = (loans?.items ?? []).filter((l) => ['approved', 'disbursed', 'am_review'].includes(l.status ?? '')).length;
+      return {
+        totalMembers: members?.total ?? 0,
+        totalSavings: totalSavings.toFixed(2),
+        activeLoans,
+        branches: branches?.items?.length ?? 0,
+      };
     },
     retry: false,
   });

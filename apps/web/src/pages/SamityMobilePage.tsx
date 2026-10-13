@@ -14,7 +14,7 @@ interface MeetingSummary {
 
 export function SamityMobilePage() {
   const [offline, setOffline] = useState(!navigator.onLine);
-  const [meetings, setMeetings] = useState<MeetingSummary[]>([
+  const [meetings] = useState<MeetingSummary[]>([
     { id: 'm1', name: 'Rupali Samity', date: '2026-09-20', time: '17:30', place: 'School premise', present: 18, total: 22 },
     { id: 'm2', name: 'Shongshod Samity', date: '2026-09-24', time: '17:00', place: 'Community center', present: 12, total: 18 },
   ]);

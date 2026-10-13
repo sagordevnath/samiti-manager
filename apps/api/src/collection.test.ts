@@ -11,7 +11,6 @@ let createAppRef: typeof import('./app.js').createApp;
 let resetLoanDemoStoreRef: typeof import('./lib/loan-store.js').resetLoanDemoStore;
 let resetCollectionDemoStoreRef: typeof import('./lib/collection-store.js').resetCollectionDemoStore;
 let resetSavingsDemoStoreRef: typeof import('./lib/savings-store.js').resetSavingsDemoStore;
-let loanDemoStoreRef: typeof import('./lib/loan-store.js').loanDemoStore;
 let collectionDemoStoreRef: typeof import('./lib/collection-store.js').collectionDemoStore;
 
 const DEMO_TOKEN = 'demo-token';
@@ -26,7 +25,6 @@ beforeEach(async () => {
   const coll = await import('./lib/collection-store.js');
   const savings = await import('./lib/savings-store.js');
   resetLoanDemoStoreRef = loan.resetLoanDemoStore;
-  loanDemoStoreRef = loan.loanDemoStore;
   resetCollectionDemoStoreRef = coll.resetCollectionDemoStore;
   collectionDemoStoreRef = coll.collectionDemoStore;
   resetSavingsDemoStoreRef = savings.resetSavingsDemoStore;

@@ -134,7 +134,6 @@ export interface SecurityData {
 const g = globalThis as unknown as { __securityDemoData?: SecurityData };
 
 function seed(): SecurityData {
-  const now = new Date().toISOString();
   // Seed one encrypted member record per branch so masking/unmask and the
   // cross-branch simulator have concrete data to protect.
   const encryptedFields = new Map<string, Partial<Record<ProtectedField, string>>>();

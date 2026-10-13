@@ -89,7 +89,6 @@ import {
   MIS_MATVIEWS,
   SCHEDULE_FREQUENCIES,
   applyFilter,
-  buildReportRows,
   canRunSavedReport,
   clientProtectionIndicators,
   complaintDueAt,
@@ -110,30 +109,25 @@ import {
   toCsv,
   toExcelXml,
   toPrintHtml,
-  validateSavedShared,
   type ComplaintRecord,
 } from '../src/reports-mis-ops';
 import {
-  PROJECT_FLOW,
   PROJECT_ACTION_TO_STATUS,
   activitiesInRange,
   batchStats,
   buildCertificateTextBn,
   canTransitionProject,
   indicatorProgress,
-  logframeEntrySchema,
   nextBeneficiaryCode,
   nextBatchCode,
   nextCertificateNo,
   projectSchema,
   projectTotalBudget,
-  serviceRecordSchema,
   type ActivityRecord,
   type IndicatorValue,
   type LogframeEntry,
 } from '../src/programs';
 import {
-  AUTO_TASK_DEFS,
   TargetMetrics,
   buildAutoTask,
   canDelegateTask,
@@ -272,7 +266,6 @@ import {
   countConsecutiveMissed,
   renderLegalNoticeBn,
   ROOT_CAUSES,
-  type RootCause,
 } from '../src/delinquency-recovery.js';
 import { formatMoney, toAsciiDigits, toBanglaDigits } from '../src/format';
 import { allocateCollectionPayment, rowTotalDue } from '../src/collection-engine';
@@ -1479,7 +1472,6 @@ describe('delinquency classification (shared engine)', () => {
   });
 
   it('computes on-time repayment rate only for installments already due', () => {
-    const today = new Date().toISOString().slice(0, 10);
     const past = (d: number) => new Date(Date.now() - d * 86_400_000).toISOString().slice(0, 10);
     const future = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString().slice(0, 10);
     const rows = [
@@ -1655,7 +1647,6 @@ describe('accounting — trial balance', () => {
 
 // ── Accounting ops (requirements 6–10) ──────────────────────────────────────
 describe('accounting ops', () => {
-  const HO = { id: '00000000-0000-4000-8000-0000000000h1', code: 'HO', name: 'Head Office', isHo: true };
   const nameFor = (code: string) => `acc-${code}`;
 
   it('buildTransferLines balances for branch→HO and cancels at consolidation', () => {

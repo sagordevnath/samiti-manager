@@ -509,7 +509,6 @@ import {
   payslipText,
   COMPONENT_LABELS_BN,
   type PayrollLine,
-  type PayrollStatus,
 } from '@samity/shared';
 import {
   addPfEntry,

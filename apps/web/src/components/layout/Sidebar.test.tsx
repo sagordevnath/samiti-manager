@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { useAuthStore } from '@/stores/auth';
 import { useUiStore } from '@/stores/ui';
-import i18n from '@/lib/i18n'; // eslint-disable-line @typescript-eslint/no-unused-vars — registers instance before render
+import i18n from '@/lib/i18n';
 
 // Pin Bangla so text assertions are deterministic regardless of detector order.
 i18n.language = 'bn';

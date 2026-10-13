@@ -14,7 +14,6 @@
 import { z } from 'zod';
 import { uuidSchema } from './schemas.js';
 import { toBanglaDigits } from './format.js';
-import { num } from './work.js';
 
 /* ═══════════════════ 5) Client protection indicators ═══════════════════════ */
 
@@ -177,7 +176,6 @@ export function clientProtectionIndicators(
   const days = resolved.map((c) => Math.max(0, Math.round((Date.parse(`${c.resolvedAt!.slice(0, 10)}T00:00:00Z`) - Date.parse(`${c.reportedAt}T00:00:00Z`)) / 86_400_000)));
   const slaOk = resolved.filter((c) => c.resolvedAt!.slice(0, 10) <= c.dueAt).length;
 
-  const openMemberIds = new Set(rows.filter((c) => !['resolved', 'rejected'].includes(c.status) && c.memberId).map((c) => c.memberId!));
   const memberCounts = new Map<string, number>();
   for (const c of rows) {
     if (c.memberId) memberCounts.set(c.memberId, (memberCounts.get(c.memberId) ?? 0) + 1);

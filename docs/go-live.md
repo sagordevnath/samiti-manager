@@ -41,7 +41,9 @@ unchecked box blocks go-live.
 
 ## 5. Monitoring & support
 
-- [ ] Health check wired to an uptime monitor (free: UptimeRobot pinging `/api/v1/health`).
+- [ ] Health check wired to an uptime monitor: the in-repo `API keep-alive` workflow
+      (`.github/workflows/keep-alive.yml` — free, no signup, and it keeps a free-tier API
+      instance warm), or an external monitor such as UptimeRobot pinging `/api/v1/health`.
 - [ ] Sentry (free plan) DSN set for web + api, or structured pino logs shipped to a free log drain.
 - [ ] Nightly backup workflow green for 3 consecutive days.
 - [ ] Support rota named: who receives complaints, who can unlock accounts, who approves write-offs.

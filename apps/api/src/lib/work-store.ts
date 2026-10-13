@@ -37,7 +37,6 @@ export class WorkDemoError extends Error {
 
 const ORG_ID = '00000000-0000-4000-8000-0000000000aa';
 const BRANCH_DHAKA = '00000000-0000-4000-8000-0000000000b1';
-const BRANCH_MYMENSINGH = '00000000-0000-4000-8000-0000000000b2';
 /** HR demo staff ids reused as assignees. */
 const STAFF_F1 = '00000000-0000-4000-8000-0000000000f1';
 const STAFF_F2 = '00000000-0000-4000-8000-0000000000f2';
@@ -380,7 +379,6 @@ export function upsertWorkTarget(store: WorkDemoData, input: {
   period: string;
   metrics: TargetMetrics;
 }, createdBy: string): WorkTarget {
-  const ownerId = input.ownerBranchId ?? input.ownerStaffId ?? null;
   const existing = store.targets.find(
     (t) => t.scope === input.scope && (t.ownerBranchId ?? null) === (input.ownerBranchId ?? null) && (t.ownerStaffId ?? null) === (input.ownerStaffId ?? null) && t.period === input.period,
   );

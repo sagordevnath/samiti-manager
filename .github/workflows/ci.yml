@@ -17,7 +17,9 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Node 22+: @supabase/supabase-js 2.116+ throws at import on Node 20
+          # (native WebSocket missing), so the suite cannot pass below 22.
+          node-version: 22
           cache: npm
 
       - name: Install dependencies

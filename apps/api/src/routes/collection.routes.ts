@@ -337,7 +337,7 @@ collectionRouter.get(
 async function buildSheetRowForMember(
   memberId: string,
   meetingDate: string,
-  rules: Awaited<ReturnType<typeof loadRules>>,
+  _rules: Awaited<ReturnType<typeof loadRules>>,
 ): Promise<CollectionSheetRow | null> {
   const ms = Date.parse(`${meetingDate}T00:00:00Z`);
   const { data: apps } = await supabaseAdmin

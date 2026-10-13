@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { CheckCircle2, Circle, Loader2, Plus } from 'lucide-react';
+import { CheckCircle2, Circle, Plus } from 'lucide-react';
 import type { BranchStatus } from '@samity/shared';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';

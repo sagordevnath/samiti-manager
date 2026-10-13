@@ -45,7 +45,7 @@ function Td({ children, right, className }: { children?: React.ReactNode; right?
   return <td className={`px-2 py-1.5 ${right ? 'text-right tabular-nums' : ''} ${className ?? ''}`}>{children}</td>;
 }
 
-interface DocListItem extends Omit<DocumentRecord, 'html'> {}
+type DocListItem = Omit<DocumentRecord, 'html'>;
 interface GeneratedDoc extends DocListItem { qrDataUrl: string }
 
 /* ── Tab 1: generate ──────────────────────────────────────────────────────── */

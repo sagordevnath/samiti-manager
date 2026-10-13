@@ -9,7 +9,6 @@
 import { randomUUID } from 'node:crypto';
 import {
   CASH_MODES,
-  DISBURSEMENT_ACCOUNTS,
   DISBURSEMENT_CHECKS,
   DISBURSEMENT_MODE_LABELS_BN,
   buildDisbursementJournal,
@@ -35,7 +34,6 @@ import {
   type LoanStepPayload,
   type OverdueInstallment,
   type DisbursementRecord,
-  type DisbursementCheckItem,
   type Holiday,
   type SmsMessage,
   type UtilizationPlanInput,

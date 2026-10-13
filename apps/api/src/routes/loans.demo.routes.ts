@@ -25,7 +25,6 @@ import {
   type UtilizationPlanInput,
   type UtilizationVerifyInput,
 } from '@samity/shared';
-import { demoAuthUser } from '../lib/demo.js';
 import { LoanDemoError } from '../lib/loan-store.js';
 import {
   buildOverlapReport,

@@ -10,7 +10,7 @@
  * API (authority), DB functions and the web preview share one implementation.
  */
 import { z } from 'zod';
-import { moneySchema, uuidSchema } from './schemas.js';
+import { uuidSchema } from './schemas.js';
 
 // ── 8) Date rule engine ──────────────────────────────────────────────────────
 export const COLLECTION_RULE_DEFAULTS = {
@@ -303,7 +303,6 @@ export function scanEntriesForFraud(input: {
   const firstEntry = input.entries[0];
   if (!firstEntry) return flags;
 
-  const officerId = firstEntry.officerId;
   const officerName = 'officer';
 
   // (a) identical amounts across many members

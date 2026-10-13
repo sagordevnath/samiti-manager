@@ -10,14 +10,12 @@ import {
   evaluateLoanEligibility,
   resolveApproval,
   summarizeCycle,
-  type ApprovalMatrixRow,
   type LoanCycleCheckResult,
   type LoanCyclePolicy,
   type LoanCycleSummary,
   type OverlapReport,
   type OverdueInstallment,
   type UtilizationPlanInput,
-  type UtilizationReport,
 } from '@samity/shared';
 
 export interface LoanFacts {

@@ -371,12 +371,12 @@ workRouter.get(
     const { data: targets, error } = await query;
     if (error) throw error;
 
-    // Live actuals per branch: members joined this month, disbursed loans,
-    // collection entries and savings balances.
-    const [newMembersRes, disbursedRes, collectionRes, savingsRes] = await Promise.all([
+    // Live actuals per branch: members joined this month, disbursed loans and
+    // savings balances. Collections are NOT attributed here, so the `collection`
+    // metric reports 0 on the live path (tracked in docs/backlog.md).
+    const [newMembersRes, disbursedRes, savingsRes] = await Promise.all([
       supabaseAdmin.from('members').select('branch_id, count').eq('org_id', orgOf(req)).gte('join_date', `${period}-01`).limit(1000),
       supabaseAdmin.from('loan_applications').select('branch_id, requested_amount').eq('status', 'disbursed'),
-      supabaseAdmin.from('collection_entries').select('allocation'),
       supabaseAdmin.from('savings_accounts').select('branch_id, balance'),
     ]);
     const actualByBranch = new Map<string, { newMembers: number; disbursement: number; collection: number; savings: number }>();
@@ -388,7 +388,6 @@ workRouter.get(
     };
     for (const m of newMembersRes.data ?? []) bump(m.branch_id, (a) => (a.newMembers += 1));
     for (const l of disbursedRes.data ?? []) bump(l.branch_id, (a) => (a.disbursement += Number(l.requested_amount)));
-    for (const e of collectionRes.data ?? []) bump(null, (a) => (a.collection += 0));
     for (const s of savingsRes.data ?? []) bump(s.branch_id, (a) => (a.savings += Number(s.balance)));
 
     const items = (targets ?? []).map((t) => {

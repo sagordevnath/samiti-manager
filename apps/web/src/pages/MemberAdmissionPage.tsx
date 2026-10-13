@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, Ban, CheckCircle2, ChevronLeft, ChevronRight, Loader2, ShieldCheck, UserRoundCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -18,8 +18,6 @@ const STAGES = [
   { key: 'member_issued', title: 'Member number issued', titleBn: 'সদস্য নম্বর দেওয়া হয়েছে', short: 'Member no.' },
   { key: 'passbook_generated', title: 'Passbook generated', titleBn: 'পাসবুক প্রস্তুত', short: 'Passbook' },
 ] as const;
-
-type StageKey = (typeof STAGES)[number]['key'];
 
 const initialForm = {
   fullName: '',

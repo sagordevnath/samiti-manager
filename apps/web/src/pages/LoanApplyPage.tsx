@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { api } from '@/lib/api';
 import { useMoneyFormatter } from '@/lib/digits';
-import { normalizeProduct, type ProductRow } from '@/pages/LoanProductsPage';
+import { normalizeProduct } from '@/pages/LoanProductsPage';
 
 const TYPE_BN: Record<string, string> = {
   general: 'সাধারণ',

@@ -109,7 +109,6 @@ export function SamitiesPage() {
     const own = sessionBranchId;
     const first = own ? selectableBranches.find((b) => b.id === own) : undefined;
     if (first) setForm((prev) => ({ ...prev, branchId: first.id }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [branches.data, editingId, form.branchId, sessionBranchId]);
 
   const invalidate = () => {

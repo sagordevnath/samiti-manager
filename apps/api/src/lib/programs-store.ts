@@ -56,13 +56,10 @@ import {
   type IndicatorValueBody,
   type LogframeEntry,
   type LogframeEntryBody,
-  type LogframeLevel,
   type ProjectAction,
   type ProjectBody,
   type ProjectExpenseBody,
   type ProjectRecord,
-  type ProjectStatus,
-  type ServiceKind,
   type ServiceRecord,
   type ServiceRecordBody,
   type TrainingAttendanceBody,
@@ -72,11 +69,9 @@ import {
   type TrainingBatchBody,
   type TestScoreBody,
   type Certificate,
-  type TrainingAttendanceBody as AttendanceBody,
 } from '@samity/shared';
 
 const ORG_ID = '00000000-0000-4000-8000-0000000000aa';
-const BRANCH_DHAKA = '00000000-0000-4000-8000-0000000000b1';
 
 export class ProgramsError extends Error {
   constructor(

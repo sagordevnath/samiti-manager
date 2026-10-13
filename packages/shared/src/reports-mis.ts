@@ -12,7 +12,6 @@
  *    code. Money is string numeric(14,2).
  */
 import { z } from 'zod';
-import { moneySchema, uuidSchema } from './schemas.js';
 import { toBanglaDigits } from './format.js';
 import { num } from './work.js';
 import type { ClassifiedLoan } from './delinquency.js';
@@ -176,8 +175,6 @@ export interface StandardReport {
   rows: Record<string, string | number>[];
   totals: Record<string, string | number>;
 }
-
-type Col = StandardReport['columns'][number];
 
 function reportSkeleton(kind: StandardReportKind, titleBn: string, titleEn: string, periodEnd: string, params: ReportMeta['params'], periodStart: string | null = null): StandardReport {
   return { meta: { kind, titleBn, titleEn, periodStart, periodEnd, params, rowCount: 0 }, columns: [], rows: [], totals: {} };
@@ -976,7 +973,6 @@ export function buildBranchDashboard(
 export function buildBoardDashboard(s: MisSnapshot, ratios: Record<RatioKey, FinancialRatio>, ho: HeadOfficeDashboard): BoardDashboard {
   const kpi = (key: string, labelBn: string, value: string, tone: KpiCard['tone'], hintBn?: string): KpiCard => ({ key, labelBn, value, tone, hintBn });
   const oss = ratios.oss.value;
-  const par30 = ho.branchesRanked[0]?.par30Pct ?? 0;
   return {
     role: 'board',
     date: s.asOf,
